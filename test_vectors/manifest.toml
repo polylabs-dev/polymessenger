@@ -1,0 +1,8 @@
+[test_suite]
+name = "polymessenger golden tests"
+circuit = "polymessenger_circuits"
+version = "0.1.0"
+
+[[vectors]]
+file = "polymessenger.esz"
+tags = ["golden", "happy-path", "crypto", "telemetry-isolation"]

@@ -1,0 +1,381 @@
+/// Poly Messenger Contact Graph — graph contact_network
+/// Stratum graph storage + Cortex AI governance
+/// govern lex esn/global/org/polylabs/messenger
+///
+/// Contacts, groups, trust relationships, and blocking form a graph.
+/// Replaces flat contact lists with a relational model supporting
+/// trust verification, group membership, and blocking.
+
+import polykit_identity from "../../../polykit/circuits/fl/polykit_identity.fl"
+import polykit_metering from "../../../polykit/circuits/fl/polykit_metering.fl"
+
+// ── Data: Node types (data + store graph + cortex) ──────────────
+
+data ContactNode : app v1 {
+    contact_id: bytes(16),
+    user_id: bytes(32),
+    display_name: bytes(128),
+    phone_number: string,
+    email: string,
+    signing_pubkey: bytes(2592),
+    encryption_pubkey: bytes(1568),
+    security_tier: u8,
+    verified_at: u64,
+}
+    store graph
+    govern lex esn/global/org/polylabs/messenger
+    cortex {
+        redact [phone_number, email]
+        obfuscate [display_name, user_id]
+        infer on_write
+        on_anomaly alert "messenger-security"
+    }
+
+data GroupNode : app v1 {
+    group_id: bytes(16),
+    name: bytes(128),
+    creator_id: bytes(16),
+    max_members: u32,
+    created_at: u64,
+}
+    store graph
+    govern lex esn/global/org/polylabs/messenger
+    cortex {
+        obfuscate [creator_id]
+        infer on_write
+    }
+
+// ── Edge types ──────────────────────────────────────────────────
+
+type KnowsEdge = struct {
+    established_at: u64,
+    verified: bool,
+}
+
+type BlockedEdge = struct {
+    blocked_at: u64,
+    reason: u8,
+}
+
+type GroupMemberEdge = struct {
+    role: u8,
+    joined_at: u64,
+}
+
+// ── Graph definition ────────────────────────────────────────────
+
+graph contact_network {
+    node ContactNode
+    node GroupNode
+    edge KnowsEdge
+    edge BlockedEdge
+    edge GroupMemberEdge
+
+    overlay trust_level: u8 curate delta_curate
+    overlay last_message_ns: u64 bitmask delta_curate
+    overlay message_count: u64 bitmask delta_curate
+    overlay online_status: u8 curate delta_curate
+    overlay unread_count: u32 bitmask delta_curate
+
+    storage csr {
+        hot @bram,
+        warm @ddr,
+        cold @nvme,
+    }
+
+    ai_feed contact_recommendation {
+        model cortex_eslm
+        features [trust_level, message_frequency, mutual_contacts, verification_status]
+        anomaly_threshold 0.85
+    }
+
+    observe contact_network: [trust_level, message_count, online_status] threshold: {
+        anomaly_score 0.85
+        baseline_window 120
+    }
+}
+
+series contact_series: contact_network
+    merkle_chain true
+    lattice_imprint true
+    witness_attest true
+
+// ── Circuits: Contact management ────────────────────────────────
+
+circuit add_contact(
+    owner_id: bytes(16),
+    contact_pk: bytes(2592),
+    encryption_pk: bytes(1568),
+    display_name: bytes(128),
+) -> ContactNode
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [contacts_added, contact_graph_size]
+    monitor "graph_growth" { contact_graph_size < 100000 }
+    invariant "no_self_contact" { owner_id != contact_id }
+    invariant "pubkey_valid" { len(contact_pk) == 2592 }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let contact_id = polykit_identity.derive_user_id(contact_pk)
+    let ts = now()
+    let node = ContactNode {
+        contact_id: contact_id,
+        user_id: bit_slice(sha3_256(contact_pk), 0, 256),
+        display_name: display_name,
+        phone_number: "",
+        email: "",
+        signing_pubkey: contact_pk,
+        encryption_pubkey: encryption_pk,
+        security_tier: 0,
+        verified_at: 0,
+    }
+    graph_insert(contact_network, node)
+    let edge = KnowsEdge { established_at: ts, verified: false }
+    graph_edge(contact_network, owner_id, contact_id, edge)
+    overlay_set(contact_network, contact_id, trust_level, 0)
+    overlay_set(contact_network, contact_id, message_count, 0)
+    overlay_set(contact_network, contact_id, unread_count, 0)
+    overlay_set(contact_network, contact_id, online_status, 0)
+    node
+}
+
+circuit verify_contact(
+    owner_id: bytes(16),
+    contact_id: bytes(16),
+    verification_signature: bytes(4627),
+    verification_payload: bytes,
+) -> bool
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    constant_time true
+    meters [compute_cycles, crypto_ops]
+    observe metrics: [verifications, verification_successes, verification_failures]
+    monitor "verification_failure_rate" { verification_failures / verifications < 0.1 }
+    invariant "mutual_verification" { both_parties_verify }
+    wasm_abi [eslite_query, eslite_insert, now]
+{
+    let contact = graph_lookup(contact_network, contact_id)
+    let valid = polykit_identity.verify_signature(
+        contact.signing_pubkey,
+        verification_payload,
+        verification_signature,
+    )
+    if valid {
+        let ts = now()
+        let updated_edge = KnowsEdge { established_at: ts, verified: true }
+        graph_edge_update(contact_network, owner_id, contact_id, updated_edge)
+        overlay_set(contact_network, contact_id, trust_level, 2)
+        let updated_node = ContactNode {
+            contact_id: contact.contact_id,
+            user_id: contact.user_id,
+            display_name: contact.display_name,
+            phone_number: contact.phone_number,
+            email: contact.email,
+            signing_pubkey: contact.signing_pubkey,
+            encryption_pubkey: contact.encryption_pubkey,
+            security_tier: 1,
+            verified_at: ts,
+        }
+        graph_update(contact_network, updated_node)
+    }
+    valid
+}
+
+circuit block_contact(owner_id: bytes(16), contact_id: bytes(16), reason: u8) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles]
+    observe metrics: [contacts_blocked, block_reasons]
+    invariant "block_is_immediate" { blocked_at == now() }
+    wasm_abi [eslite_insert, now]
+{
+    let ts = now()
+    let edge = BlockedEdge { blocked_at: ts, reason: reason }
+    graph_edge(contact_network, owner_id, contact_id, edge)
+    graph_edge_remove(contact_network, owner_id, contact_id, KnowsEdge)
+    overlay_set(contact_network, contact_id, trust_level, 0)
+    overlay_set(contact_network, contact_id, online_status, 0)
+    true
+}
+
+// ── Circuits: Group management ──────────────────────────────────
+
+circuit create_group(
+    creator_id: bytes(16),
+    name: bytes(128),
+    max_members: u32,
+) -> GroupNode
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [groups_created, group_graph_size]
+    monitor "group_size_limit" { max_members <= 1024 }
+    invariant "creator_is_admin" { creator_role == ADMIN }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let group_seed = blake3(concat(creator_id, name, u64_to_bytes(ts)))
+    let group_id = bit_slice(sha3_256(group_seed), 0, 128)
+    let group = GroupNode {
+        group_id: group_id,
+        name: name,
+        creator_id: creator_id,
+        max_members: max_members,
+        created_at: ts,
+    }
+    graph_insert(contact_network, group)
+    let admin_edge = GroupMemberEdge { role: 2, joined_at: ts }
+    graph_edge(contact_network, creator_id, group_id, admin_edge)
+    group
+}
+
+circuit join_group(user_id: bytes(16), group_id: bytes(16), invited_by: bytes(16)) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles]
+    observe metrics: [group_joins, group_membership_size]
+    monitor "group_capacity" { group_membership_size < max_members }
+    invariant "not_blocked" { user_not_blocked_from_group }
+    invariant "inviter_is_member" { inviter_has_membership_edge }
+    wasm_abi [eslite_query, eslite_insert, now]
+{
+    let group = graph_lookup(contact_network, group_id)
+    let current_members = graph_edge_count(contact_network, group_id, GroupMemberEdge)
+    if current_members >= group.max_members { return false }
+    let inviter_edge = graph_edge_lookup(contact_network, invited_by, group_id, GroupMemberEdge)
+    if inviter_edge == null { return false }
+    let blocked = graph_edge_lookup(contact_network, group_id, user_id, BlockedEdge)
+    if blocked != null { return false }
+    let ts = now()
+    let member_edge = GroupMemberEdge { role: 0, joined_at: ts }
+    graph_edge(contact_network, user_id, group_id, member_edge)
+    true
+}
+
+circuit leave_group(user_id: bytes(16), group_id: bytes(16)) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles]
+    observe metrics: [group_leaves]
+    invariant "membership_removed" { no_edge_after_leave }
+    wasm_abi [eslite_query, eslite_insert]
+{
+    let edge = graph_edge_lookup(contact_network, user_id, group_id, GroupMemberEdge)
+    if edge == null { return false }
+    graph_edge_remove(contact_network, user_id, group_id, GroupMemberEdge)
+    let remaining = graph_edge_count(contact_network, group_id, GroupMemberEdge)
+    if remaining == 0 {
+        graph_remove(contact_network, group_id)
+    }
+    true
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "contact_operations_throughput" {
+    assert metric("contacts_added") + metric("verifications") + metric("contacts_blocked") > 0
+    window 60s
+    severity warning
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "add_and_verify_contact" {
+    circuit: [add_contact, verify_contact]
+    input {
+        owner_id: test_id("alice")
+        contact_pk: test_key("bob_mldsa_pk")
+        encryption_pk: test_key("bob_mlkem_pk")
+        display_name: bytes("Bob")
+    }
+    setup {
+        let contact = add_contact(input.owner_id, input.contact_pk, input.encryption_pk, input.display_name)
+    }
+    assert {
+        contact.contact_id != empty_bytes(16)
+        contact.security_tier == 0
+        contact.verified_at == 0
+        let sig = test_sign("bob_mldsa_sk", bytes("verify_bob"))
+        let verified = verify_contact(input.owner_id, contact.contact_id, sig, bytes("verify_bob"))
+        verified == true
+    }
+}
+
+test golden "block_contact_removes_trust" {
+    circuit: block_contact
+    input {
+        owner_id: test_id("alice")
+        contact_id: test_id("bob")
+        reason: 1
+    }
+    assert {
+        result == true
+        overlay_get(contact_network, input.contact_id, trust_level) == 0
+        graph_edge_lookup(contact_network, input.owner_id, input.contact_id, KnowsEdge) == null
+    }
+}
+
+test golden "create_group_with_admin" {
+    circuit: create_group
+    input {
+        creator_id: test_id("alice")
+        name: bytes("Test Group")
+        max_members: 100
+    }
+    assert {
+        result.group_id != empty_bytes(16)
+        result.creator_id == input.creator_id
+        result.max_members == 100
+        let edge = graph_edge_lookup(contact_network, input.creator_id, result.group_id, GroupMemberEdge)
+        edge.role == 2
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}
+
+kat_vector "blake3_empty" {
+    function: "blake3"
+    input: bytes("")
+    expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
+}
+
+// ── Fuzz targets ────────────────────────────────────────────────
+
+fuzz_target "verify_contact_fuzz" {
+    circuit: verify_contact
+    inputs {
+        owner_id: bytes(16)
+        contact_id: bytes(16)
+        verification_signature: bytes(4627)
+        verification_payload: bytes(1..4096)
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}

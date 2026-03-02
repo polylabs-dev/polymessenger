@@ -1,0 +1,124 @@
+{
+  "suite": "polymessenger_golden",
+  "version": "0.1.0",
+  "vectors": [
+    {
+      "name": "happy_path_send_message",
+      "circuit": "polymessenger_relay",
+      "input": {
+        "operation": "send",
+        "sender_spark_id": "spark:polymessenger:alice",
+        "recipient_spark_id": "spark:polymessenger:bob",
+        "session_id": "session:pm:alice_bob_001",
+        "plaintext_length": 256,
+        "ratchet_state": "established",
+        "encrypt_algorithm": "ML-KEM-1024",
+        "sign_algorithm": "ML-DSA-87"
+      },
+      "expected_output": {
+        "status": "relayed",
+        "encrypted": true,
+        "signature_valid": true,
+        "ratchet_advanced": true,
+        "cover_traffic_injected": true,
+        "relay_blind": true,
+        "sender_metadata_stripped": true
+      },
+      "expected_witness_tier": 2
+    },
+    {
+      "name": "edge_case_session_init_first_message",
+      "circuit": "polymessenger_session",
+      "input": {
+        "operation": "session_create",
+        "initiator_spark_id": "spark:polymessenger:alice",
+        "responder_spark_id": "spark:polymessenger:bob",
+        "kem_algorithm": "ML-KEM-1024",
+        "x3dh_pq_variant": true,
+        "prekey_bundle_valid": true
+      },
+      "expected_output": {
+        "status": "session_created",
+        "session_id_present": true,
+        "shared_secret_derived": true,
+        "ratchet_initialized": true,
+        "forward_secrecy": true,
+        "pq_resistant": true,
+        "hkdf_context_matches": "poly-messenger-v1"
+      },
+      "expected_witness_tier": 2
+    },
+    {
+      "name": "crypto_verify_double_ratchet_advance",
+      "circuit": "polymessenger_ratchet",
+      "input": {
+        "operation": "ratchet_advance",
+        "session_id": "session:pm:alice_bob_001",
+        "current_epoch": 42,
+        "message_index": 7,
+        "sender_ratchet_pk": "mlkem1024:ratchet_pk_042",
+        "hkdf_context": "poly-messenger-v1"
+      },
+      "expected_output": {
+        "new_epoch": 43,
+        "chain_key_rotated": true,
+        "message_key_derived": true,
+        "old_keys_deleted": true,
+        "forward_secrecy_maintained": true,
+        "hkdf_context_matches": "poly-messenger-v1",
+        "key_isolation_verified": true
+      },
+      "expected_witness_tier": 2
+    },
+    {
+      "name": "telemetry_isolation_blinded_metrics",
+      "circuit": "polymessenger_observe",
+      "input": {
+        "operation": "send",
+        "spark_id": "spark:polymessenger:charlie",
+        "message_relayed": true,
+        "relay_latency_ms": 45,
+        "emit_metrics": ["messages_relayed", "relay_latency_ms", "encrypt_ops", "ratchet_advances"]
+      },
+      "expected_output": {
+        "metrics_emitted": 4,
+        "blinded_id_used": true,
+        "cross_product_leak": false,
+        "lex_namespace": "polymessenger",
+        "aggregate_window_ms": 3600000,
+        "cohort_min_met": true,
+        "noise_applied": true,
+        "cover_traffic_ratio_reported": true
+      },
+      "expected_witness_tier": 2
+    },
+    {
+      "name": "error_expired_prekey_bundle",
+      "circuit": "polymessenger_session",
+      "input": {
+        "operation": "session_create",
+        "initiator_spark_id": "spark:polymessenger:eve",
+        "responder_spark_id": "spark:polymessenger:bob",
+        "kem_algorithm": "ML-KEM-1024",
+        "prekey_bundle_valid": false,
+        "prekey_expiry_epoch": 1000,
+        "current_epoch": 1500
+      },
+      "expected_output": {
+        "status": "error",
+        "error_code": "PREKEY_EXPIRED",
+        "epochs_expired": 500,
+        "recovery_hint": "request_fresh_prekey_bundle",
+        "no_session_created": true,
+        "no_secret_derived": true
+      },
+      "expected_witness_tier": 2
+    }
+  ],
+  "telemetry_isolation": {
+    "verify_blinded_id": true,
+    "verify_no_cross_product": true,
+    "verify_cohort_min": 50,
+    "verify_aggregate_window_ms": 3600000
+  }
+}

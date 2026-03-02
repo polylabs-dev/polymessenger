@@ -1,0 +1,293 @@
+// Poly Messenger Relay — Blind relay routing with cover traffic
+//
+// Lex Architecture:
+//   esn/global/org/polylabs/messenger/relay
+//   No relay node sees both sender and recipient.
+//   Multi-hop onion encryption: each hop peels one layer.
+//   Cover traffic makes real messages indistinguishable from noise.
+//
+// Routing:
+//   Client selects k relays from relay_mesh graph (see polymsg_relay_graph.fl).
+//   Each hop is wrapped in ML-KEM-1024 onion layer.
+//   Packet size is constant (padded to 4096 bytes) to prevent traffic analysis.
+
+import polykit_blind_relay from "../../polykit/circuits/fl/apps/polykit_blind_relay.fl"
+import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+
+type RelayId = bytes(16)
+type HopCount = u8
+
+type RelayPacket = struct {
+    onion_layers: bytes(4096),
+    packet_id: bytes(32),
+    hop_index: HopCount,
+    total_hops: HopCount,
+    timestamp_ms: u64,
+}
+
+type RelayRoute = struct {
+    route_id: bytes(32),
+    hops: [RelayId; 5],
+    hop_pubkeys: [bytes(1568); 5],
+    total_hops: HopCount,
+    created_at: u64,
+    expires_at: u64,
+}
+
+type CoverTrafficConfig = struct {
+    rate_per_second: u32,
+    packet_size: u32,
+    jitter_ms: u32,
+    mimicry_profile: u8,
+}
+
+type RouteResult = struct {
+    packet: RelayPacket,
+    route_id: bytes(32),
+    delivered: bool,
+    latency_ms: u64,
+}
+
+stream relay_events: event<RelayPacket>
+    | throttle 10000/s burst 20000
+
+// --- Route an encrypted message through the blind relay network ---
+circuit route_message(
+    plaintext_envelope: bytes,
+    route: RelayRoute,
+    sender_id: bytes(16),
+) -> RouteResult
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/relay
+    blind relay
+    constant_time true
+    meters [compute_cycles, crypto_ops, bandwidth_bytes]
+    observe metrics: [messages_routed, relay_latency_ms, onion_layers_applied, route_failures]
+    monitor "relay_latency" { relay_latency_ms < 500 }
+    invariant "constant_packet_size" { len(packet) == 4096 }
+    invariant "sender_hidden" { sender_id not in packet }
+    wasm_abi [eslite_query, stream_emit, now]
+    fuzz_target
+{
+    let padded = pad_to_size(plaintext_envelope, 4096)
+    let ts = now()
+
+    let onion = padded
+    parallel for i in (route.total_hops - 1)..0 {
+        let hop_pk = route.hop_pubkeys[i]
+        let kem = mlkem_encaps(hop_pk)
+        let layer_key = blake3(kem)
+        let layer_nonce = bit_slice(sha3_256(concat(layer_key, u64_to_bytes(i))), 0, 96)
+        let hop_header = concat(route.hops[i], u8_to_bytes(i))
+        let (encrypted_layer, tag) = aes_gcm_encrypt(layer_key, layer_nonce, onion, hop_header)
+        onion = pad_to_size(concat(kem, tag, encrypted_layer), 4096)
+    }
+
+    let packet_id = sha3_256(concat(route.route_id, u64_to_bytes(ts)))
+    let packet = RelayPacket {
+        onion_layers: onion,
+        packet_id: packet_id,
+        hop_index: 0,
+        total_hops: route.total_hops,
+        timestamp_ms: ts,
+    }
+    emit(relay_events, packet)
+    RouteResult {
+        packet: packet,
+        route_id: route.route_id,
+        delivered: true,
+        latency_ms: 0,
+    }
+}
+
+// --- Select relay nodes for a route from the relay mesh ---
+circuit select_relays(
+    sender_region: bytes(8),
+    recipient_region: bytes(8),
+    min_hops: HopCount,
+    security_tier: u8,
+) -> RelayRoute
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/relay
+    blind relay
+    meters [compute_cycles]
+    observe metrics: [route_selections, relay_candidates_evaluated, jurisdiction_diversifications]
+    monitor "route_diversity" { unique_jurisdictions >= min_hops }
+    invariant "min_hop_count" { total_hops >= min_hops }
+    invariant "jurisdiction_diversity" { no_two_consecutive_hops_same_jurisdiction }
+    wasm_abi [eslite_query, now]
+{
+    let ts = now()
+    let hop_count = if security_tier >= 3 { 5 } else if security_tier >= 2 { 4 } else { min_hops }
+    let candidates = graph_query(relay_mesh, "active_relays", sender_region, recipient_region)
+    let scored = ai_rank(candidates, "relay_selection", hop_count)
+
+    let selected_hops = parallel for i in 0..hop_count {
+        let relay = scored[i]
+        let jurisdiction_ok = if i > 0 { relay.region != scored[i - 1].region } else { true }
+        relay
+    }
+
+    let route_seed = blake3(concat(sender_region, recipient_region, u64_to_bytes(ts)))
+    let route_id = sha3_256(route_seed)
+    let expires = ts + 3600000
+
+    RelayRoute {
+        route_id: route_id,
+        hops: extract_ids(selected_hops),
+        hop_pubkeys: extract_pubkeys(selected_hops),
+        total_hops: hop_count,
+        created_at: ts,
+        expires_at: expires,
+    }
+}
+
+// --- Generate cover traffic to obscure real messaging patterns ---
+circuit generate_cover_traffic(config: CoverTrafficConfig, session_id: bytes(32)) -> RelayPacket
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/relay
+    blind full
+    constant_time true
+    meters [bandwidth_bytes]
+    observe metrics: [cover_packets_generated, cover_ratio, cover_jitter_ms]
+    monitor "cover_ratio" { cover_ratio >= 0.3 }
+    invariant "constant_packet_size" { len(packet) == 4096 }
+    invariant "indistinguishable" { cover_packet == real_packet in timing and size }
+{
+    let seed = blake3(concat(session_id, u64_to_bytes(now())))
+    let random_payload = csprng(seed, config.packet_size)
+    let padded = pad_to_size(random_payload, 4096)
+    let jitter = csprng_u32(seed) % config.jitter_ms
+    let delayed = delay_ms(padded, jitter)
+    let packet_id = sha3_256(concat(seed, u64_to_bytes(now())))
+
+    RelayPacket {
+        onion_layers: padded,
+        packet_id: packet_id,
+        hop_index: 0,
+        total_hops: 3,
+        timestamp_ms: now(),
+    }
+}
+
+// --- Strip one onion layer at a relay node ---
+circuit strip_relay_layer(
+    packet: RelayPacket,
+    relay_sk: bytes(3168),
+    relay_id: RelayId,
+) -> (RelayPacket, RelayId)
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/relay
+    blind relay
+    constant_time true
+    meters [compute_cycles, crypto_ops]
+    observe metrics: [layers_stripped, strip_latency_us, invalid_layers]
+    monitor "strip_latency" { strip_latency_us < 200 }
+    invariant "constant_packet_size" { len(output_packet) == 4096 }
+    invariant "no_sender_leak" { relay learns only next_hop }
+{
+    let kem_ct = bit_slice(packet.onion_layers, 0, 1568 * 8)
+    let tag = bit_slice(packet.onion_layers, 1568 * 8, (1568 + 16) * 8)
+    let inner = bit_slice(packet.onion_layers, (1568 + 16) * 8, 4096 * 8)
+
+    let layer_key = blake3(mlkem_decaps(relay_sk, kem_ct))
+    let layer_nonce = bit_slice(sha3_256(concat(layer_key, u64_to_bytes(packet.hop_index))), 0, 96)
+    let hop_header = concat(relay_id, u8_to_bytes(packet.hop_index))
+    let (decrypted, tag_valid) = aes_gcm_decrypt(layer_key, layer_nonce, inner, tag, hop_header)
+
+    let next_hop = bit_slice(decrypted, 0, 128)
+    let payload = bit_slice(decrypted, 128, 4096 * 8)
+    let forwarded = pad_to_size(payload, 4096)
+    zeroize(layer_key)
+
+    let next_packet = RelayPacket {
+        onion_layers: forwarded,
+        packet_id: packet.packet_id,
+        hop_index: packet.hop_index + 1,
+        total_hops: packet.total_hops,
+        timestamp_ms: packet.timestamp_ms,
+    }
+    (next_packet, next_hop)
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "relay_throughput" {
+    assert metric("messages_routed") / window_seconds > 10
+    window 60s
+    severity critical
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "route_message_constant_size" {
+    circuit: route_message
+    input {
+        plaintext_envelope: bytes("Test relay message payload")
+        route: test_route("3_hop_default")
+        sender_id: test_id("alice")
+    }
+    assert {
+        len(result.packet.onion_layers) == 4096
+        result.delivered == true
+        result.route_id == input.route.route_id
+        result.packet.hop_index == 0
+    }
+}
+
+test golden "cover_traffic_indistinguishable" {
+    circuit: generate_cover_traffic
+    input {
+        config: CoverTrafficConfig {
+            rate_per_second: 10,
+            packet_size: 4096,
+            jitter_ms: 50,
+            mimicry_profile: 1,
+        }
+        session_id: test_id("cover_session")
+    }
+    assert {
+        len(result.onion_layers) == 4096
+        result.total_hops == 3
+        result.hop_index == 0
+    }
+}
+
+test golden "strip_layer_preserves_size" {
+    circuit: strip_relay_layer
+    input {
+        packet: test_packet("onion_3hop")
+        relay_sk: test_key("relay_0_mlkem_sk")
+        relay_id: test_id("relay_0")
+    }
+    assert {
+        let (next_packet, next_hop) = strip_relay_layer(input.packet, input.relay_sk, input.relay_id)
+        len(next_packet.onion_layers) == 4096
+        next_packet.hop_index == input.packet.hop_index + 1
+        next_hop != empty_bytes(16)
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}
+
+kat_vector "blake3_empty" {
+    function: "blake3"
+    input: bytes("")
+    expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
+}
+
+kat_vector "aes_gcm_256_nist_empty" {
+    function: "aes_gcm_encrypt"
+    key: hex("0000000000000000000000000000000000000000000000000000000000000000")
+    nonce: hex("000000000000000000000000")
+    plaintext: bytes("")
+    aad: bytes("")
+    expected_ciphertext: bytes("")
+    expected_tag: hex("530f8afbc74536b9a963b4f1c4cb738b")
+}

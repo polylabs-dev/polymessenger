@@ -1,0 +1,373 @@
+/// Poly Messenger Conversation DAG — dag message_thread
+/// Stratum merkle-CSR storage + Cortex AI governance + ML-DSA-87 signing
+/// govern lex esn/global/org/polylabs/messenger
+///
+/// Messages form a DAG within each conversation.
+/// Replies create parent edges. Reactions are typed edges.
+/// Threading, ordering, and causal consistency for offline/CRDT scenarios.
+/// Every DAG mutation is PQ-signed and PoVC-attested.
+
+import polykit_metering from "../../../polykit/circuits/fl/polykit_metering.fl"
+
+// ── Data: Node types (data + store dag + cortex) ────────────────
+
+data MessageNode : app v1 {
+    message_id: bytes(16),
+    conversation_id: bytes(16),
+    sender_id: bytes(16),
+    content_hash: bytes(32),
+    content_preview: string,
+    sealed_envelope_hash: bytes(32),
+    timestamp: u64,
+    message_type: u8,
+    classification: u8,
+}
+    store dag
+    govern lex esn/global/org/polylabs/messenger
+    cortex {
+        redact [content_hash, content_preview]
+        infer on_write
+        on_anomaly alert "messenger-security"
+        on_classification auto_apply
+    }
+
+// ── Edge types ──────────────────────────────────────────────────
+
+type ReplyToEdge = struct {
+    reply_type: u8,
+}
+
+type ReactionEdge = struct {
+    reactor_id: bytes(16),
+    emoji_code: u32,
+    reacted_at: u64,
+}
+
+// ── State machine ───────────────────────────────────────────────
+
+state_machine message_lifecycle {
+    initial SENDING
+    persistence wal
+    terminal [DELETED, EXPIRED]
+    li_anomaly_detection true
+
+    SENDING -> SENT when relay_confirmed
+    SENDING -> FAILED when relay_failed guard retry_limit_reached
+    SENT -> DELIVERED when recipient_acked
+    DELIVERED -> READ when recipient_read
+    READ -> EXPIRED when expiration_reached guard has_expiration
+    SENT -> EXPIRED when expiration_reached guard has_expiration
+    DELIVERED -> DELETED when sender_deleted
+    READ -> DELETED when sender_deleted
+}
+
+// ── DAG definition ──────────────────────────────────────────────
+
+dag message_thread {
+    node MessageNode
+    edge ReplyToEdge
+    edge ReactionEdge
+
+    enforce acyclic
+    sign ml_dsa_87
+
+    overlay read_status: u8 curate delta_curate
+    overlay expiration_ns: u64 curate delta_curate
+    overlay reaction_count: u32 bitmask delta_curate
+    overlay delivery_status: u8 curate delta_curate
+    overlay classification_level: u8 curate delta_curate
+
+    storage merkle_csr {
+        hot @bram,
+        warm @ddr,
+        cold @nvme,
+    }
+
+    attest povc {
+        witness threshold(2, 3)
+    }
+
+    ai_feed message_anomaly {
+        model cortex_eslm
+        features [send_rate, burst_pattern, reply_depth, conversation_velocity]
+        anomaly_threshold 0.8
+    }
+
+    observe message_thread: [delivery_status, expiration_ns, classification_level] threshold: {
+        anomaly_score 0.8
+        baseline_window 60
+    }
+}
+
+series message_series: message_thread
+    merkle_chain true
+    lattice_imprint true
+    witness_attest true
+
+// ── Circuits: Message operations ────────────────────────────────
+
+circuit send_message(
+    conversation_id: bytes(16),
+    sender_id: bytes(16),
+    sealed_envelope_hash: bytes(32),
+    message_type: u8,
+    reply_to: bytes(16),
+) -> MessageNode
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles, memory_bytes, bandwidth_bytes]
+    observe metrics: [messages_sent, message_dag_size, reply_depth, send_latency_us]
+    monitor "send_latency" { send_latency_us < 1000 }
+    invariant "dag_acyclic" { no_cycles_after_insert }
+    invariant "sender_authenticated" { sender_id verified }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let msg_seed = blake3(concat(conversation_id, sender_id, u64_to_bytes(ts)))
+    let message_id = bit_slice(sha3_256(msg_seed), 0, 128)
+
+    let node = MessageNode {
+        message_id: message_id,
+        conversation_id: conversation_id,
+        sender_id: sender_id,
+        content_hash: sealed_envelope_hash,
+        content_preview: "",
+        sealed_envelope_hash: sealed_envelope_hash,
+        timestamp: ts,
+        message_type: message_type,
+        classification: 0,
+    }
+    dag_insert(message_thread, node)
+
+    if reply_to != empty_bytes(16) {
+        let reply_edge = ReplyToEdge { reply_type: 0 }
+        dag_edge(message_thread, message_id, reply_to, reply_edge)
+    }
+
+    overlay_set(message_thread, message_id, delivery_status, 0)
+    overlay_set(message_thread, message_id, reaction_count, 0)
+    overlay_set(message_thread, message_id, read_status, 0)
+    overlay_set(message_thread, message_id, classification_level, 0)
+    fsm_transition(message_lifecycle, message_id, SENDING)
+    node
+}
+
+circuit receive_message(
+    message_id: bytes(16),
+    recipient_id: bytes(16),
+    sealed_envelope_hash: bytes(32),
+) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles, bandwidth_bytes]
+    observe metrics: [messages_received, receive_latency_us, duplicate_receives]
+    monitor "receive_latency" { receive_latency_us < 500 }
+    invariant "hash_matches" { stored_hash == sealed_envelope_hash }
+    wasm_abi [eslite_query, eslite_insert, now]
+{
+    let node = dag_lookup(message_thread, message_id)
+    if node == null { return false }
+    let hash_valid = node.sealed_envelope_hash == sealed_envelope_hash
+    if !hash_valid { return false }
+
+    let current_status = fsm_state(message_lifecycle, message_id)
+    if current_status == SENT {
+        fsm_transition(message_lifecycle, message_id, DELIVERED)
+        overlay_set(message_thread, message_id, delivery_status, 2)
+    }
+    true
+}
+
+circuit mark_read(message_id: bytes(16), reader_id: bytes(16)) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles]
+    observe metrics: [messages_read, read_latency_ms]
+    invariant "delivered_before_read" { status >= DELIVERED }
+    wasm_abi [eslite_query, eslite_insert, now]
+{
+    let current_status = fsm_state(message_lifecycle, message_id)
+    if current_status != DELIVERED { return false }
+    fsm_transition(message_lifecycle, message_id, READ)
+    overlay_set(message_thread, message_id, read_status, 1)
+    overlay_set(message_thread, message_id, delivery_status, 3)
+    let node = dag_lookup(message_thread, message_id)
+    let conversation_id = node.conversation_id
+    let sender_id = node.sender_id
+    let unread = graph_overlay_get(contact_network, sender_id, unread_count)
+    if unread > 0 {
+        graph_overlay_set(contact_network, sender_id, unread_count, unread - 1)
+    }
+    true
+}
+
+circuit add_reaction(
+    message_id: bytes(16),
+    reactor_id: bytes(16),
+    emoji_code: u32,
+) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles]
+    observe metrics: [reactions_added, reaction_types]
+    invariant "message_exists" { dag_lookup(message_id) != null }
+    invariant "no_duplicate_reaction" { no_same_reactor_same_emoji }
+    wasm_abi [eslite_query, eslite_insert, now]
+{
+    let node = dag_lookup(message_thread, message_id)
+    if node == null { return false }
+    let ts = now()
+    let reaction = ReactionEdge {
+        reactor_id: reactor_id,
+        emoji_code: emoji_code,
+        reacted_at: ts,
+    }
+    let reaction_node_id = blake3(concat(message_id, reactor_id, u32_to_bytes(emoji_code)))
+    dag_edge(message_thread, bit_slice(reaction_node_id, 0, 128), message_id, reaction)
+    let current_count = overlay_get(message_thread, message_id, reaction_count)
+    overlay_set(message_thread, message_id, reaction_count, current_count + 1)
+    true
+}
+
+circuit delete_message(message_id: bytes(16), requester_id: bytes(16)) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles]
+    observe metrics: [messages_deleted]
+    invariant "only_sender_deletes" { requester_id == sender_id }
+    invariant "terminal_state" { status becomes DELETED }
+    wasm_abi [eslite_query, eslite_insert]
+{
+    let node = dag_lookup(message_thread, message_id)
+    if node == null { return false }
+    if node.sender_id != requester_id { return false }
+
+    let current_status = fsm_state(message_lifecycle, message_id)
+    if current_status == DELETED or current_status == EXPIRED { return false }
+
+    fsm_transition(message_lifecycle, message_id, DELETED)
+    overlay_set(message_thread, message_id, delivery_status, 5)
+    dag_tombstone(message_thread, message_id)
+    true
+}
+
+circuit expire_messages(conversation_id: bytes(16), current_time: u64) -> u64
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger
+    status production
+    precision C
+    povc true
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [messages_expired, expiration_scans, expiration_latency_ms]
+    monitor "expiration_scan_time" { expiration_latency_ms < 5000 }
+    invariant "only_expirable" { has_expiration guard satisfied }
+    wasm_abi [eslite_query, eslite_insert]
+{
+    let candidates = dag_query(message_thread, conversation_id, "has_expiration")
+    let expired_count = 0
+    parallel for msg in candidates {
+        let expiration = overlay_get(message_thread, msg.message_id, expiration_ns)
+        if expiration > 0 and current_time > expiration {
+            let status = fsm_state(message_lifecycle, msg.message_id)
+            if status != DELETED and status != EXPIRED {
+                fsm_transition(message_lifecycle, msg.message_id, EXPIRED)
+                overlay_set(message_thread, msg.message_id, delivery_status, 4)
+                dag_tombstone(message_thread, msg.message_id)
+                expired_count = expired_count + 1
+            }
+        }
+    }
+    expired_count
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "message_throughput" {
+    assert metric("messages_sent") + metric("messages_received") > 0
+    window 60s
+    severity warning
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "send_and_receive_message" {
+    circuit: [send_message, receive_message]
+    input {
+        conversation_id: test_id("conv_1")
+        sender_id: test_id("alice")
+        sealed_envelope_hash: test_hash("envelope_1")
+        message_type: 0
+        reply_to: empty_bytes(16)
+        recipient_id: test_id("bob")
+    }
+    setup {
+        let msg = send_message(input.conversation_id, input.sender_id, input.sealed_envelope_hash, input.message_type, input.reply_to)
+    }
+    assert {
+        msg.message_id != empty_bytes(16)
+        msg.conversation_id == input.conversation_id
+        msg.sender_id == input.sender_id
+        let received = receive_message(msg.message_id, input.recipient_id, input.sealed_envelope_hash)
+        received == true
+    }
+}
+
+test golden "send_reply_creates_dag_edge" {
+    circuit: send_message
+    input {
+        conversation_id: test_id("conv_1")
+        sender_id: test_id("bob")
+        sealed_envelope_hash: test_hash("reply_envelope")
+        message_type: 0
+        reply_to: test_id("parent_msg")
+    }
+    assert {
+        result.message_id != empty_bytes(16)
+        dag_edge_exists(message_thread, result.message_id, input.reply_to, ReplyToEdge) == true
+    }
+}
+
+test golden "mark_read_updates_status" {
+    circuit: mark_read
+    input {
+        message_id: test_id("msg_delivered")
+        reader_id: test_id("bob")
+    }
+    setup {
+        mock fsm_state(message_lifecycle, test_id("msg_delivered")) -> DELIVERED
+    }
+    assert {
+        result == true
+        overlay_get(message_thread, input.message_id, read_status) == 1
+        overlay_get(message_thread, input.message_id, delivery_status) == 3
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "blake3_empty" {
+    function: "blake3"
+    input: bytes("")
+    expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
+}
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}

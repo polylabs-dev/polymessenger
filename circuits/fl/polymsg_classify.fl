@@ -1,0 +1,214 @@
+// Poly Messenger Classify — Message content classification and ESLM moderation
+//
+// Lex Architecture:
+//   esn/global/org/polylabs/messenger/classify
+//   All inference runs on-device via ESLM (Embedded Small Language Model).
+//   No message content leaves the device for classification.
+//   Classification results are used locally for UI treatment and spam filtering.
+//
+// Classification categories:
+//   SAFE, SPAM, PHISHING, MALWARE_LINK, HARASSMENT, NSFW, SCAM
+// Moderation actions:
+//   ALLOW, WARN, QUARANTINE, BLOCK
+
+type ContentClassification = struct {
+    message_hash: bytes(32),
+    category: u8,
+    confidence: u16,
+    subcategories: [u8; 4],
+    classified_at: u64,
+}
+
+type ModerationResult = struct {
+    message_hash: bytes(32),
+    action: u8,
+    reason_code: u16,
+    user_overridable: bool,
+    expires_at: u64,
+}
+
+type PhishingSignal = struct {
+    url_hash: bytes(32),
+    domain_similarity: u16,
+    link_mismatch: bool,
+    urgency_score: u16,
+    credential_request: bool,
+}
+
+type SpamSignal = struct {
+    message_hash: bytes(32),
+    repetition_score: u16,
+    sender_reputation: u16,
+    bulk_pattern: bool,
+    contact_age_hours: u64,
+}
+
+// --- Classify message content using on-device ESLM ---
+circuit classify_message(content: bytes, sender_id: bytes(16), conversation_id: bytes(16)) -> ContentClassification
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/classify
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [classifications, classification_latency_ms, category_distribution]
+    monitor "classification_latency" { classification_latency_ms < 50 }
+    invariant "on_device_only" { no_network_calls }
+    invariant "content_never_exfiltrated" { content stays local }
+    wasm_abi [eslite_query, now]
+{
+    let content_hash = sha3_256(content)
+    let ts = now()
+    let tokens = eslm_tokenize(content, 512)
+    let embeddings = eslm_embed(tokens, "polymsg-classify-v1")
+    let scores = eslm_classify(embeddings, [
+        "safe", "spam", "phishing", "malware_link",
+        "harassment", "nsfw", "scam",
+    ])
+    let top_category = argmax(scores)
+    let confidence = scores[top_category]
+    let subcats = top_k(scores, 4)
+
+    ContentClassification {
+        message_hash: content_hash,
+        category: top_category,
+        confidence: confidence,
+        subcategories: subcats,
+        classified_at: ts,
+    }
+}
+
+// --- Check for spam patterns using sender reputation and message features ---
+circuit check_spam(content: bytes, sender_id: bytes(16), contact_age_hours: u64) -> SpamSignal
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/classify
+    meters [compute_cycles]
+    observe metrics: [spam_checks, spam_detected, false_positive_rate]
+    monitor "spam_false_positive" { false_positive_rate < 0.02 }
+    invariant "on_device_only" { no_network_calls }
+    wasm_abi [eslite_query]
+{
+    let msg_hash = sha3_256(content)
+    let tokens = eslm_tokenize(content, 256)
+    let repetition = eslm_repetition_score(tokens)
+    let reputation = load_reputation(sender_id)
+    let bulk = eslm_bulk_pattern(tokens, sender_id)
+
+    SpamSignal {
+        message_hash: msg_hash,
+        repetition_score: repetition,
+        sender_reputation: reputation,
+        bulk_pattern: bulk,
+        contact_age_hours: contact_age_hours,
+    }
+}
+
+// --- Detect phishing attempts in message URLs and text ---
+circuit detect_phishing(content: bytes, known_contacts: u32) -> PhishingSignal
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/classify
+    meters [compute_cycles]
+    observe metrics: [phishing_checks, phishing_detected, url_extractions]
+    monitor "phishing_detection_rate" { phishing_detected > 0 implies alert_raised }
+    invariant "on_device_only" { no_network_calls }
+    wasm_abi [eslite_query]
+{
+    let urls = extract_urls(content)
+    let url_hash = if len(urls) > 0 { sha3_256(urls[0]) } else { empty_bytes(32) }
+    let domain_sim = eslm_domain_similarity(urls, "polymsg-phishing-v1")
+    let link_mismatch = eslm_link_text_mismatch(content, urls)
+    let urgency = eslm_urgency_score(content)
+    let cred_request = eslm_credential_request(content)
+
+    PhishingSignal {
+        url_hash: url_hash,
+        domain_similarity: domain_sim,
+        link_mismatch: link_mismatch,
+        urgency_score: urgency,
+        credential_request: cred_request,
+    }
+}
+
+// --- Apply moderation policy based on classification and signals ---
+circuit moderate_content(
+    classification: ContentClassification,
+    spam: SpamSignal,
+    phishing: PhishingSignal,
+    user_settings: u8,
+) -> ModerationResult
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/classify
+    meters [compute_cycles]
+    observe metrics: [moderation_actions, blocks, warnings, quarantines, user_overrides]
+    monitor "block_rate" { blocks / moderation_actions < 0.05 }
+    invariant "safe_always_allowed" { category == SAFE implies action == ALLOW }
+    invariant "on_device_only" { no_network_calls }
+    wasm_abi [now]
+{
+    let ts = now()
+    let action = if classification.category == 0 { 0 }
+        else if classification.confidence > 900 and classification.category >= 4 { 3 }
+        else if phishing.credential_request and phishing.domain_similarity > 800 { 3 }
+        else if spam.bulk_pattern and spam.sender_reputation < 200 { 2 }
+        else if classification.confidence > 700 { 1 }
+        else { 0 }
+
+    let overridable = action < 3
+    let expires = if action == 2 { ts + 86400000 } else { 0 }
+
+    ModerationResult {
+        message_hash: classification.message_hash,
+        action: action,
+        reason_code: classification.category * 100 + action,
+        user_overridable: overridable,
+        expires_at: expires,
+    }
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "classification_throughput" {
+    assert metric("classifications") / window_seconds > 50
+    window 60s
+    severity warning
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "classify_safe_message" {
+    circuit: classify_message
+    input {
+        content: bytes("Hey, are we still on for lunch tomorrow?")
+        sender_id: test_id("alice")
+        conversation_id: test_id("conv_1")
+    }
+    assert {
+        result.category == 0
+        result.confidence > 500
+        result.message_hash == sha3_256(input.content)
+    }
+}
+
+test golden "detect_phishing_url" {
+    circuit: detect_phishing
+    input {
+        content: bytes("URGENT: Your account is compromised! Click http://polylab5.com/verify")
+        known_contacts: 0
+    }
+    assert {
+        result.urgency_score > 700
+        result.credential_request == true
+        result.link_mismatch == true
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}
+
+kat_vector "sha3_256_abc" {
+    function: "sha3_256"
+    input: bytes("abc")
+    expected: hex("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
+}

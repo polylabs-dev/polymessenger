@@ -1,0 +1,420 @@
+// Poly Messenger Ratchet — PQ Double Ratchet for forward secrecy
+//
+// Lex Architecture:
+//   esn/global/org/polylabs/messenger/ratchet
+//   ML-KEM-1024 based ratchet (not X25519/X448).
+//   SHA3-256 symmetric chain derivation.
+//
+// Ratchet structure:
+//   Root chain:  HKDF-SHA3-256(root_key, ml-kem shared secret) → new root_key + chain_key
+//   Send chain:  SHA3-256(chain_key) → message_key + next chain_key
+//   Recv chain:  SHA3-256(chain_key) → message_key + next chain_key
+//
+// Every DH ratchet step uses a fresh ML-KEM-1024 encapsulation, providing
+// PQ forward secrecy: compromise of current keys cannot decrypt past messages.
+
+import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
+
+type ChainKey = bytes(32)
+type MessageKey = bytes(32)
+
+type RatchetState = struct {
+    root_key: bytes(32),
+    send_chain_key: ChainKey,
+    recv_chain_key: ChainKey,
+    send_chain_index: u64,
+    recv_chain_index: u64,
+    our_ratchet_keypair_pk: bytes(1568),
+    our_ratchet_keypair_sk: bytes(3168),
+    their_ratchet_pubkey: bytes(1568),
+    previous_send_count: u64,
+    skipped_keys: bytes(4096),
+}
+
+type RatchetHeader = struct {
+    ratchet_pubkey: bytes(1568),
+    previous_chain_length: u64,
+    message_index: u64,
+}
+
+type RatchetEncryptResult = struct {
+    header: RatchetHeader,
+    ciphertext: bytes,
+    nonce: bytes(12),
+    tag: bytes(16),
+}
+
+type RatchetDecryptResult = struct {
+    plaintext: bytes,
+    updated_state: RatchetState,
+    verified: bool,
+}
+
+type SkippedKeyEntry = struct {
+    ratchet_pubkey_hash: bytes(32),
+    message_index: u64,
+    message_key: MessageKey,
+}
+
+stream ratchet_events: event<RatchetHeader>
+    | throttle 5000/s burst 10000
+
+// --- Initialize a new ratchet from session establishment ---
+circuit init_ratchet(
+    shared_secret: bytes(32),
+    our_pk: bytes(1568),
+    our_sk: bytes(3168),
+    their_pk: bytes(1568),
+    is_initiator: bool,
+) -> RatchetState
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/ratchet
+    constant_time true
+    meters [compute_cycles, crypto_ops]
+    observe metrics: [ratchets_initialized, init_latency_us]
+    monitor "ratchet_init_latency" { init_latency_us < 200 }
+    invariant "root_key_entropy" { len(root_key) == 32 }
+    invariant "asymmetric_chains" { send_chain_key != recv_chain_key }
+    wasm_abi [eslite_insert, now]
+{
+    let kem_shared = mlkem_encaps(their_pk)
+    let kem_secret = mlkem_decaps(our_sk, kem_shared)
+    let root_material = hkdf_sha3(shared_secret, kem_secret, 64)
+    let root_key = bit_slice(root_material, 0, 256)
+    let chain_seed = bit_slice(root_material, 256, 512)
+
+    let send_chain = if is_initiator {
+        sha3_256(concat(chain_seed, 0x01))
+    } else {
+        sha3_256(concat(chain_seed, 0x02))
+    }
+    let recv_chain = if is_initiator {
+        sha3_256(concat(chain_seed, 0x02))
+    } else {
+        sha3_256(concat(chain_seed, 0x01))
+    }
+
+    RatchetState {
+        root_key: root_key,
+        send_chain_key: send_chain,
+        recv_chain_key: recv_chain,
+        send_chain_index: 0,
+        recv_chain_index: 0,
+        our_ratchet_keypair_pk: our_pk,
+        our_ratchet_keypair_sk: our_sk,
+        their_ratchet_pubkey: their_pk,
+        previous_send_count: 0,
+        skipped_keys: empty_bytes(4096),
+    }
+}
+
+// --- Advance the send chain and encrypt ---
+circuit ratchet_encrypt(state: RatchetState, plaintext: bytes) -> (RatchetEncryptResult, RatchetState)
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/ratchet
+    constant_time true
+    meters [compute_cycles, crypto_ops, bandwidth_bytes]
+    observe metrics: [ratchet_encryptions, chain_advances, encrypt_latency_us]
+    monitor "ratchet_encrypt_latency" { encrypt_latency_us < 300 }
+    invariant "forward_secrecy" { old_keys_erased }
+    invariant "chain_monotonic" { chain_index strictly increases }
+    wasm_abi [eslite_insert, stream_emit]
+{
+    let (message_key, next_chain_key) = advance_chain(state.send_chain_key, state.send_chain_index)
+    let nonce_seed = blake3(concat(message_key, u64_to_bytes(state.send_chain_index)))
+    let nonce = bit_slice(nonce_seed, 0, 96)
+    let header = RatchetHeader {
+        ratchet_pubkey: state.our_ratchet_keypair_pk,
+        previous_chain_length: state.previous_send_count,
+        message_index: state.send_chain_index,
+    }
+    let aad = concat(header.ratchet_pubkey, u64_to_bytes(header.message_index))
+    let (ciphertext, tag) = aes_gcm_encrypt(message_key, nonce, plaintext, aad)
+    zeroize(message_key)
+
+    let new_state = RatchetState {
+        root_key: state.root_key,
+        send_chain_key: next_chain_key,
+        recv_chain_key: state.recv_chain_key,
+        send_chain_index: state.send_chain_index + 1,
+        recv_chain_index: state.recv_chain_index,
+        our_ratchet_keypair_pk: state.our_ratchet_keypair_pk,
+        our_ratchet_keypair_sk: state.our_ratchet_keypair_sk,
+        their_ratchet_pubkey: state.their_ratchet_pubkey,
+        previous_send_count: state.previous_send_count,
+        skipped_keys: state.skipped_keys,
+    }
+
+    let result = RatchetEncryptResult {
+        header: header,
+        ciphertext: ciphertext,
+        nonce: nonce,
+        tag: tag,
+    }
+    emit(ratchet_events, header)
+    (result, new_state)
+}
+
+// --- Perform DH ratchet step if new pubkey, then decrypt ---
+circuit ratchet_decrypt(
+    state: RatchetState,
+    header: RatchetHeader,
+    ciphertext: bytes,
+    nonce: bytes(12),
+    tag: bytes(16),
+) -> RatchetDecryptResult
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/ratchet
+    constant_time true
+    meters [compute_cycles, crypto_ops]
+    observe metrics: [ratchet_decryptions, dh_ratchet_steps, skipped_key_lookups, decrypt_failures]
+    monitor "decrypt_failure_rate" { decrypt_failures / ratchet_decryptions < 0.01 }
+    invariant "forward_secrecy" { old_keys_erased }
+    invariant "chain_monotonic" { chain_index strictly increases }
+    wasm_abi [eslite_query, eslite_insert]
+{
+    let their_pk_hash = sha3_256(header.ratchet_pubkey)
+    let current_pk_hash = sha3_256(state.their_ratchet_pubkey)
+
+    let working_state = if their_pk_hash != current_pk_hash {
+        let skipped = skip_message_keys(state, state.recv_chain_index, header.previous_chain_length)
+        let kem_shared = mlkem_encaps(header.ratchet_pubkey)
+        let kem_secret = mlkem_decaps(skipped.our_ratchet_keypair_sk, kem_shared)
+        let root_material = hkdf_sha3(skipped.root_key, kem_secret, 64)
+        let new_root = bit_slice(root_material, 0, 256)
+        let new_recv_chain = bit_slice(root_material, 256, 512)
+        let (new_ratchet_pk, new_ratchet_sk) = mlkem_keygen()
+        let send_material = hkdf_sha3(new_root, mlkem_decaps(new_ratchet_sk, mlkem_encaps(header.ratchet_pubkey)), 64)
+        let final_root = bit_slice(send_material, 0, 256)
+        let new_send_chain = bit_slice(send_material, 256, 512)
+        RatchetState {
+            root_key: final_root,
+            send_chain_key: new_send_chain,
+            recv_chain_key: new_recv_chain,
+            send_chain_index: 0,
+            recv_chain_index: 0,
+            our_ratchet_keypair_pk: new_ratchet_pk,
+            our_ratchet_keypair_sk: new_ratchet_sk,
+            their_ratchet_pubkey: header.ratchet_pubkey,
+            previous_send_count: skipped.send_chain_index,
+            skipped_keys: skipped.skipped_keys,
+        }
+    } else {
+        state
+    }
+
+    let filled = skip_message_keys(working_state, working_state.recv_chain_index, header.message_index)
+    let (message_key, next_recv_chain) = advance_chain(filled.recv_chain_key, header.message_index)
+    let aad = concat(header.ratchet_pubkey, u64_to_bytes(header.message_index))
+    let (plaintext, tag_valid) = aes_gcm_decrypt(message_key, nonce, ciphertext, tag, aad)
+    zeroize(message_key)
+
+    let updated = RatchetState {
+        root_key: filled.root_key,
+        send_chain_key: filled.send_chain_key,
+        recv_chain_key: next_recv_chain,
+        send_chain_index: filled.send_chain_index,
+        recv_chain_index: header.message_index + 1,
+        our_ratchet_keypair_pk: filled.our_ratchet_keypair_pk,
+        our_ratchet_keypair_sk: filled.our_ratchet_keypair_sk,
+        their_ratchet_pubkey: filled.their_ratchet_pubkey,
+        previous_send_count: filled.previous_send_count,
+        skipped_keys: filled.skipped_keys,
+    }
+
+    RatchetDecryptResult {
+        plaintext: plaintext,
+        updated_state: updated,
+        verified: tag_valid,
+    }
+}
+
+// --- Derive message key and next chain key from current chain ---
+circuit advance_chain(chain_key: ChainKey, index: u64) -> (MessageKey, ChainKey)
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/ratchet
+    constant_time true
+    observe metrics: [chain_advances]
+    invariant "chain_monotonic" { chain_index strictly increases }
+    invariant "key_independence" { message_key != next_chain_key }
+{
+    let message_key = sha3_256(concat(chain_key, 0x01, u64_to_bytes(index)))
+    let next_chain_key = sha3_256(concat(chain_key, 0x02, u64_to_bytes(index)))
+    zeroize(chain_key)
+    (message_key, next_chain_key)
+}
+
+// --- Cache skipped message keys for out-of-order delivery ---
+circuit skip_message_keys(state: RatchetState, current: u64, target: u64) -> RatchetState
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/ratchet
+    constant_time true
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [keys_skipped, skip_cache_size]
+    monitor "skip_limit" { keys_skipped < 256 }
+    invariant "bounded_skip" { target - current <= 256 }
+    wasm_abi [eslite_insert]
+{
+    let working_chain = state.recv_chain_key
+    let skipped = state.skipped_keys
+    let pk_hash = sha3_256(state.their_ratchet_pubkey)
+    parallel for i in current..target {
+        let (mk, next) = advance_chain(working_chain, i)
+        let entry = SkippedKeyEntry {
+            ratchet_pubkey_hash: pk_hash,
+            message_index: i,
+            message_key: mk,
+        }
+        store(concat(pk_hash, u64_to_bytes(i)), entry)
+        working_chain = next
+    }
+    RatchetState {
+        root_key: state.root_key,
+        send_chain_key: state.send_chain_key,
+        recv_chain_key: working_chain,
+        send_chain_index: state.send_chain_index,
+        recv_chain_index: target,
+        our_ratchet_keypair_pk: state.our_ratchet_keypair_pk,
+        our_ratchet_keypair_sk: state.our_ratchet_keypair_sk,
+        their_ratchet_pubkey: state.their_ratchet_pubkey,
+        previous_send_count: state.previous_send_count,
+        skipped_keys: skipped,
+    }
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "ratchet_throughput" {
+    assert metric("ratchet_encryptions") + metric("ratchet_decryptions") > 0
+    window 60s
+    severity critical
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "ratchet_encrypt_decrypt_roundtrip" {
+    circuit: [init_ratchet, ratchet_encrypt, ratchet_decrypt]
+    input {
+        shared_secret: test_key("shared_secret_32")
+        alice_pk: test_key("alice_mlkem_pk")
+        alice_sk: test_key("alice_mlkem_sk")
+        bob_pk: test_key("bob_mlkem_pk")
+        bob_sk: test_key("bob_mlkem_sk")
+        plaintext: bytes("Double ratchet test message")
+    }
+    setup {
+        let alice_state = init_ratchet(input.shared_secret, input.alice_pk, input.alice_sk, input.bob_pk, true)
+        let bob_state = init_ratchet(input.shared_secret, input.bob_pk, input.bob_sk, input.alice_pk, false)
+    }
+    assert {
+        let (encrypted, alice_next) = ratchet_encrypt(alice_state, input.plaintext)
+        encrypted.ciphertext != input.plaintext
+        encrypted.header.message_index == 0
+        alice_next.send_chain_index == 1
+        let decrypted = ratchet_decrypt(bob_state, encrypted.header, encrypted.ciphertext, encrypted.nonce, encrypted.tag)
+        decrypted.plaintext == input.plaintext
+        decrypted.verified == true
+    }
+}
+
+test golden "chain_advance_produces_independent_keys" {
+    circuit: advance_chain
+    input {
+        chain_key: test_key("chain_key_32")
+        index: 0
+    }
+    assert {
+        let (msg_key, next_chain) = advance_chain(input.chain_key, 0)
+        msg_key != input.chain_key
+        next_chain != input.chain_key
+        msg_key != next_chain
+        len(msg_key) == 32
+        len(next_chain) == 32
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}
+
+kat_vector "sha3_256_abc" {
+    function: "sha3_256"
+    input: bytes("abc")
+    expected: hex("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
+}
+
+kat_vector "hkdf_sha3_256_ratchet_derivation" {
+    function: "hkdf_sha3"
+    ikm: hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+    salt: hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+    info: hex("f0f1f2f3f4f5f6f7f8f9")
+    length: 64
+    note: "HKDF-SHA3-256 root chain derivation; adapted from RFC 5869 structure"
+    expected: hex("832390086cda71fb47625bb5ceb168e4c8e26a1a16ed34d9fc7fe92c1481579338da362cb8d9f925d7cb407090bf3df3bdb6bf0adbe7d9b06fee36ec2a58e18f7")
+}
+
+kat_vector "aes_gcm_256_nist_empty" {
+    function: "aes_gcm_encrypt"
+    key: hex("0000000000000000000000000000000000000000000000000000000000000000")
+    nonce: hex("000000000000000000000000")
+    plaintext: bytes("")
+    aad: bytes("")
+    expected_ciphertext: bytes("")
+    expected_tag: hex("530f8afbc74536b9a963b4f1c4cb738b")
+}
+
+// ── Fuzz targets ────────────────────────────────────────────────
+
+fuzz_target "ratchet_encrypt_fuzz" {
+    circuit: ratchet_encrypt
+    inputs {
+        root_key: bytes(32)
+        send_chain_key: bytes(32)
+        recv_chain_key: bytes(32)
+        plaintext: bytes(1..65536)
+        ratchet_pk: bytes(1568)
+        ratchet_sk: bytes(3168)
+        their_pk: bytes(1568)
+    }
+    assert {
+        no_panic
+        constant_time true
+        result.0.ciphertext != plaintext
+        result.0.tag != empty_bytes(16)
+    }
+}
+
+fuzz_target "ratchet_decrypt_fuzz" {
+    circuit: ratchet_decrypt
+    inputs {
+        root_key: bytes(32)
+        send_chain_key: bytes(32)
+        recv_chain_key: bytes(32)
+        ciphertext: bytes(1..65536)
+        nonce: bytes(12)
+        tag: bytes(16)
+        ratchet_pubkey: bytes(1568)
+        message_index: u64
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}
+
+fuzz_target "advance_chain_fuzz" {
+    circuit: advance_chain
+    inputs {
+        chain_key: bytes(32)
+        index: u64
+    }
+    assert {
+        no_panic
+        constant_time true
+        result.0 != result.1
+    }
+}

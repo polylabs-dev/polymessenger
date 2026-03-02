@@ -1,0 +1,272 @@
+// Poly Messenger Metering — per-operation metering with tier enforcement
+//
+// Lex Architecture:
+//   esn/global/org/polylabs/messenger/metering
+//   Isolated from all other Poly product metering (zero-linkage).
+//   Maps each messenger operation to the PolyKit 8-dimension model.
+//
+// Dimension mapping:
+//   send  → [B(andwidth), O(bservables), E(xecutions)]
+//   receive → [B(andwidth), O(bservables)]
+//   call  → [B(andwidth), E(xecutions), H(ashes)]
+//   relay → [B(andwidth), H(ashes)]
+
+import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+
+type MessengerOperation = enum {
+    Send,
+    Receive,
+    Call,
+    Relay,
+}
+
+type MessengerUsage = struct {
+    user_id: bytes(16),
+    sends: u64,
+    receives: u64,
+    calls: u64,
+    relays: u64,
+    bandwidth_bytes: u64,
+    period_start_ms: u64,
+}
+
+type MessengerQuota = struct {
+    tier: string,
+    max_sends_per_month: u64,
+    max_calls_per_month: u64,
+    max_relay_hops: u64,
+    max_bandwidth_bytes: u64,
+}
+
+type QuotaCheckResult = struct {
+    allowed: bool,
+    operation: MessengerOperation,
+    remaining: u64,
+    reset_at_ms: u64,
+}
+
+stream metering_events: event<polykit_metering.MeteringRecord>
+    | throttle 2000/s burst 5000
+
+// --- Meter a send operation: [B, O, E] ---
+circuit meter_send(user_id: bytes(16), message_size: u64) -> polykit_metering.MeteringRecord
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/metering
+    meters [compute_cycles, bandwidth_bytes]
+    observe metrics: [sends_metered, send_bytes_metered]
+    monitor "send_metering_lag" { metering_latency_ms < 10 }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let dims = polykit_metering.DimensionValues {
+        executions: 1,
+        hashes: 0,
+        bandwidth: message_size,
+        storage: 0,
+        observables: 1,
+        proofs: 0,
+        circuits: 0,
+        mpc_sessions: 0,
+    }
+    polykit_metering.record_usage(user_id, "messenger.send", dims)
+}
+
+// --- Meter a receive operation: [B, O] ---
+circuit meter_receive(user_id: bytes(16), message_size: u64) -> polykit_metering.MeteringRecord
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/metering
+    meters [compute_cycles, bandwidth_bytes]
+    observe metrics: [receives_metered, receive_bytes_metered]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let dims = polykit_metering.DimensionValues {
+        executions: 0,
+        hashes: 0,
+        bandwidth: message_size,
+        storage: 0,
+        observables: 1,
+        proofs: 0,
+        circuits: 0,
+        mpc_sessions: 0,
+    }
+    polykit_metering.record_usage(user_id, "messenger.receive", dims)
+}
+
+// --- Meter a call operation: [B, E, H] ---
+circuit meter_call(user_id: bytes(16), duration_ms: u64, bandwidth_used: u64) -> polykit_metering.MeteringRecord
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/metering
+    meters [compute_cycles, bandwidth_bytes]
+    observe metrics: [calls_metered, call_duration_ms, call_bandwidth_bytes]
+    monitor "call_bandwidth" { call_bandwidth_bytes < 10000000 }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let hash_ops = duration_ms / 100
+    let dims = polykit_metering.DimensionValues {
+        executions: 1,
+        hashes: hash_ops,
+        bandwidth: bandwidth_used,
+        storage: 0,
+        observables: 0,
+        proofs: 0,
+        circuits: 0,
+        mpc_sessions: 0,
+    }
+    polykit_metering.record_usage(user_id, "messenger.call", dims)
+}
+
+// --- Meter a relay operation: [B, H] ---
+circuit meter_relay(user_id: bytes(16), packet_size: u64, hop_count: u64) -> polykit_metering.MeteringRecord
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/metering
+    meters [compute_cycles, bandwidth_bytes]
+    observe metrics: [relays_metered, relay_hops_metered]
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let total_bandwidth = packet_size * hop_count
+    let hash_ops = hop_count * 2
+    let dims = polykit_metering.DimensionValues {
+        executions: 0,
+        hashes: hash_ops,
+        bandwidth: total_bandwidth,
+        storage: 0,
+        observables: 0,
+        proofs: 0,
+        circuits: 0,
+        mpc_sessions: 0,
+    }
+    polykit_metering.record_usage(user_id, "messenger.relay", dims)
+}
+
+// --- Check if an operation is within the user's tier quota ---
+circuit check_quota(user_id: bytes(16), operation: MessengerOperation, quota: MessengerQuota) -> QuotaCheckResult
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/metering
+    meters [compute_cycles]
+    observe metrics: [quota_checks, quota_exceeded, quota_remaining_pct]
+    monitor "quota_exceeded_rate" { quota_exceeded / quota_checks < 0.10 }
+    invariant "free_tier_enforced" { tier == "free" implies limit_enforced }
+    wasm_abi [eslite_query, now]
+{
+    let usage = get_usage(user_id)
+    let ts = now()
+    let (remaining, allowed) = match operation {
+        Send => {
+            let r = quota.max_sends_per_month - usage.sends
+            (r, usage.sends < quota.max_sends_per_month)
+        },
+        Receive => (quota.max_sends_per_month, true),
+        Call => {
+            let r = quota.max_calls_per_month - usage.calls
+            (r, usage.calls < quota.max_calls_per_month)
+        },
+        Relay => {
+            let r = quota.max_relay_hops - usage.relays
+            (r, usage.relays < quota.max_relay_hops)
+        },
+    }
+    let reset = usage.period_start_ms + 2592000000
+
+    QuotaCheckResult {
+        allowed: allowed,
+        operation: operation,
+        remaining: remaining,
+        reset_at_ms: reset,
+    }
+}
+
+// --- Get accumulated usage for a messenger user ---
+circuit get_usage(user_id: bytes(16)) -> MessengerUsage
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/metering
+    observe metrics: [usage_queries]
+    wasm_abi [eslite_query]
+{
+    load(user_id)
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "metering_throughput" {
+    assert metric("sends_metered") + metric("receives_metered") + metric("calls_metered") + metric("relays_metered") > 0
+    window 60s
+    severity warning
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "meter_send_records_dimensions" {
+    circuit: meter_send
+    input {
+        user_id: test_id("alice")
+        message_size: 1024
+    }
+    assert {
+        result.dimensions.executions == 1
+        result.dimensions.bandwidth == 1024
+        result.dimensions.observables == 1
+        result.dimensions.hashes == 0
+        result.dimensions.storage == 0
+    }
+}
+
+test golden "check_quota_allows_within_limit" {
+    circuit: check_quota
+    input {
+        user_id: test_id("alice")
+        operation: Send
+        quota: MessengerQuota {
+            tier: "free",
+            max_sends_per_month: 1000,
+            max_calls_per_month: 100,
+            max_relay_hops: 500,
+            max_bandwidth_bytes: 1073741824,
+        }
+    }
+    setup {
+        mock get_usage(test_id("alice")) -> MessengerUsage {
+            user_id: test_id("alice"),
+            sends: 500,
+            receives: 200,
+            calls: 10,
+            relays: 50,
+            bandwidth_bytes: 536870912,
+            period_start_ms: 1700000000000,
+        }
+    }
+    assert {
+        result.allowed == true
+        result.remaining == 500
+        result.operation == Send
+    }
+}
+
+test golden "check_quota_blocks_exceeded" {
+    circuit: check_quota
+    input {
+        user_id: test_id("bob")
+        operation: Send
+        quota: MessengerQuota {
+            tier: "free",
+            max_sends_per_month: 1000,
+            max_calls_per_month: 100,
+            max_relay_hops: 500,
+            max_bandwidth_bytes: 1073741824,
+        }
+    }
+    setup {
+        mock get_usage(test_id("bob")) -> MessengerUsage {
+            user_id: test_id("bob"),
+            sends: 1000,
+            receives: 200,
+            calls: 10,
+            relays: 50,
+            bandwidth_bytes: 536870912,
+            period_start_ms: 1700000000000,
+        }
+    }
+    assert {
+        result.allowed == false
+        result.remaining == 0
+        result.operation == Send
+    }
+}

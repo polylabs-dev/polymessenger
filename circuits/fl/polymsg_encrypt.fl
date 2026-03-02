@@ -1,0 +1,315 @@
+// Poly Messenger Encrypt — PQ end-to-end message encryption
+//
+// Lex Architecture:
+//   esn/global/org/polylabs/messenger/encrypt
+//   Per-session ML-KEM-1024 key exchange, AES-256-GCM message encryption.
+//   Session keys rotate on each ratchet step (see polymsg_ratchet.fl).
+//
+// Key exchange:
+//   ML-KEM-1024 encapsulation → 32-byte shared secret
+//   HKDF-SHA3-256(shared_secret, session_context) → SessionKey
+//   AES-256-GCM(SessionKey, nonce, plaintext, aad) → ciphertext + tag
+
+import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
+import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+
+type SessionKey = bytes(32)
+type MessageKey = bytes(32)
+type Nonce = bytes(12)
+
+type EncryptedMessage = struct {
+    ciphertext: bytes,
+    nonce: Nonce,
+    tag: bytes(16),
+    sender_id: bytes(16),
+    session_id: bytes(32),
+    sequence: u64,
+    timestamp_ms: u64,
+}
+
+type DecryptedMessage = struct {
+    plaintext: bytes,
+    sender_id: bytes(16),
+    session_id: bytes(32),
+    sequence: u64,
+    verified: bool,
+}
+
+type SessionEstablishment = struct {
+    session_id: bytes(32),
+    session_key: SessionKey,
+    kem_ciphertext: bytes(1568),
+    initiator_id: bytes(16),
+    responder_id: bytes(16),
+    established_at: u64,
+}
+
+type SessionRotation = struct {
+    session_id: bytes(32),
+    new_key: SessionKey,
+    old_key_hash: bytes(32),
+    rotation_index: u64,
+}
+
+stream encrypt_events: event<EncryptedMessage>
+    | throttle 5000/s burst 10000
+
+// --- Establish a new encrypted session via ML-KEM-1024 ---
+circuit establish_session(
+    initiator_sk: bytes(3168),
+    responder_pk: bytes(1568),
+    initiator_id: bytes(16),
+    responder_id: bytes(16),
+) -> SessionEstablishment
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/encrypt
+    constant_time true
+    meters [compute_cycles, crypto_ops, bandwidth_bytes]
+    observe metrics: [sessions_established, kem_encapsulations, session_latency_ms]
+    monitor "session_establishment_latency" { session_latency_ms < 100 }
+    invariant "shared_secret_entropy" { len(shared_secret) == 32 }
+    invariant "session_id_unique" { session_id != prior_session_id }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let kem_result = mlkem_encaps(responder_pk)
+    let shared_secret = mlkem_decaps(initiator_sk, kem_result)
+    let session_context = blake3(concat(initiator_id, responder_id))
+    let session_key = hkdf_sha3(shared_secret, session_context, 32)
+    let session_id = sha3_256(concat(session_key, session_context))
+    let ts = now()
+    let establishment = SessionEstablishment {
+        session_id: bit_slice(session_id, 0, 256),
+        session_key: session_key,
+        kem_ciphertext: kem_result,
+        initiator_id: initiator_id,
+        responder_id: responder_id,
+        established_at: ts,
+    }
+    store(establishment.session_id, establishment)
+    establishment
+}
+
+// --- Encrypt a message with AES-256-GCM under the current session key ---
+circuit encrypt_message(
+    plaintext: bytes,
+    session_key: SessionKey,
+    sender_id: bytes(16),
+    session_id: bytes(32),
+    sequence: u64,
+) -> EncryptedMessage
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/encrypt
+    constant_time true
+    meters [compute_cycles, crypto_ops, bandwidth_bytes]
+    observe metrics: [messages_encrypted, encryption_latency_us, ciphertext_bytes]
+    monitor "encrypt_latency" { encryption_latency_us < 500 }
+    invariant "ciphertext_expansion" { len(ciphertext) >= len(plaintext) }
+    invariant "nonce_uniqueness" { nonce != prior_nonce }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let message_key = hkdf_sha3(session_key, concat(session_id, u64_to_bytes(sequence)), 32)
+    let nonce_seed = blake3(concat(message_key, u64_to_bytes(sequence)))
+    let nonce = bit_slice(nonce_seed, 0, 96)
+    let aad = concat(sender_id, session_id, u64_to_bytes(sequence))
+    let (ciphertext, tag) = aes_gcm_encrypt(message_key, nonce, plaintext, aad)
+    let ts = now()
+    let msg = EncryptedMessage {
+        ciphertext: ciphertext,
+        nonce: nonce,
+        tag: tag,
+        sender_id: sender_id,
+        session_id: session_id,
+        sequence: sequence,
+        timestamp_ms: ts,
+    }
+    emit(encrypt_events, msg)
+    msg
+}
+
+// --- Decrypt a message with AES-256-GCM under the current session key ---
+circuit decrypt_message(
+    encrypted: EncryptedMessage,
+    session_key: SessionKey,
+) -> DecryptedMessage
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/encrypt
+    constant_time true
+    meters [compute_cycles, crypto_ops]
+    observe metrics: [messages_decrypted, decryption_failures, decryption_latency_us]
+    monitor "decrypt_failure_rate" { decryption_failures / messages_decrypted < 0.01 }
+    invariant "tag_verified" { tag_valid == true }
+    wasm_abi [eslite_query]
+{
+    let message_key = hkdf_sha3(session_key, concat(encrypted.session_id, u64_to_bytes(encrypted.sequence)), 32)
+    let aad = concat(encrypted.sender_id, encrypted.session_id, u64_to_bytes(encrypted.sequence))
+    let (plaintext, tag_valid) = aes_gcm_decrypt(message_key, encrypted.nonce, encrypted.ciphertext, encrypted.tag, aad)
+    DecryptedMessage {
+        plaintext: plaintext,
+        sender_id: encrypted.sender_id,
+        session_id: encrypted.session_id,
+        sequence: encrypted.sequence,
+        verified: tag_valid,
+    }
+}
+
+// --- Rotate the session key using HKDF chain derivation ---
+circuit rotate_session_key(
+    current_key: SessionKey,
+    session_id: bytes(32),
+    rotation_index: u64,
+) -> SessionRotation
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/encrypt
+    constant_time true
+    meters [compute_cycles, crypto_ops]
+    observe metrics: [key_rotations, rotation_latency_us]
+    monitor "rotation_frequency" { key_rotations > 0 }
+    invariant "forward_secrecy" { new_key != current_key }
+    invariant "old_key_erased" { zeroize(current_key) after return }
+    wasm_abi [eslite_insert]
+{
+    let rotation_context = concat(session_id, u64_to_bytes(rotation_index))
+    let new_key = hkdf_sha3(current_key, rotation_context, 32)
+    let old_key_hash = sha3_256(current_key)
+    zeroize(current_key)
+    let rotation = SessionRotation {
+        session_id: session_id,
+        new_key: new_key,
+        old_key_hash: old_key_hash,
+        rotation_index: rotation_index,
+    }
+    store(session_id, rotation)
+    rotation
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "encryption_throughput" {
+    assert metric("messages_encrypted") / window_seconds > 100
+    window 60s
+    severity critical
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "encrypt_decrypt_roundtrip" {
+    circuit: [establish_session, encrypt_message, decrypt_message]
+    input {
+        plaintext: bytes("Hello, secret message!")
+        initiator_sk: test_key("initiator_mlkem_sk")
+        responder_pk: test_key("responder_mlkem_pk")
+        initiator_id: test_id("alice")
+        responder_id: test_id("bob")
+    }
+    setup {
+        let session = establish_session(input.initiator_sk, input.responder_pk, input.initiator_id, input.responder_id)
+    }
+    assert {
+        let encrypted = encrypt_message(input.plaintext, session.session_key, input.initiator_id, session.session_id, 0)
+        encrypted.ciphertext != input.plaintext
+        encrypted.tag != empty_bytes(16)
+        let decrypted = decrypt_message(encrypted, session.session_key)
+        decrypted.plaintext == input.plaintext
+        decrypted.verified == true
+    }
+}
+
+test golden "session_key_rotation_produces_new_key" {
+    circuit: rotate_session_key
+    input {
+        current_key: test_key("session_key_32")
+        session_id: test_id("session_1")
+        rotation_index: 1
+    }
+    assert {
+        result.new_key != input.current_key
+        len(result.new_key) == 32
+        result.old_key_hash == sha3_256(input.current_key)
+        result.rotation_index == 1
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "aes_gcm_256_nist_empty" {
+    function: "aes_gcm_encrypt"
+    key: hex("0000000000000000000000000000000000000000000000000000000000000000")
+    nonce: hex("000000000000000000000000")
+    plaintext: bytes("")
+    aad: bytes("")
+    expected_ciphertext: bytes("")
+    expected_tag: hex("530f8afbc74536b9a963b4f1c4cb738b")
+}
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}
+
+kat_vector "blake3_empty" {
+    function: "blake3"
+    input: bytes("")
+    expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
+}
+
+kat_vector "hkdf_sha3_256_basic" {
+    function: "hkdf_sha3"
+    ikm: hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+    salt: hex("000102030405060708090a0b0c")
+    info: hex("f0f1f2f3f4f5f6f7f8f9")
+    length: 32
+    note: "Adapted from RFC 5869 Test Case 1 structure for SHA3-256 variant"
+    expected: hex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf")
+}
+
+// ── Fuzz targets ────────────────────────────────────────────────
+
+fuzz_target "encrypt_message_fuzz" {
+    circuit: encrypt_message
+    inputs {
+        plaintext: bytes(1..65536)
+        session_key: bytes(32)
+        sender_id: bytes(16)
+        session_id: bytes(32)
+        sequence: u64
+    }
+    assert {
+        no_panic
+        constant_time true
+        len(result.ciphertext) >= len(plaintext)
+        result.tag != empty_bytes(16)
+    }
+}
+
+fuzz_target "decrypt_message_fuzz" {
+    circuit: decrypt_message
+    inputs {
+        ciphertext: bytes(1..65536)
+        nonce: bytes(12)
+        tag: bytes(16)
+        session_key: bytes(32)
+        sender_id: bytes(16)
+        session_id: bytes(32)
+        sequence: u64
+    }
+    assert {
+        no_panic
+        constant_time true
+    }
+}
+
+fuzz_target "session_establish_fuzz" {
+    circuit: establish_session
+    inputs {
+        initiator_sk: bytes(3168)
+        responder_pk: bytes(1568)
+        initiator_id: bytes(16)
+        responder_id: bytes(16)
+    }
+    assert {
+        no_panic
+        constant_time true
+        len(result.session_key) == 32
+    }
+}

@@ -74,22 +74,39 @@ This repo is a fresh build on the PolyKit + eStream graph/DAG architecture. Scre
 Contacts, groups, and trust relationships form a graph. This replaces flat contact lists with a relational model that supports trust verification, group membership, and blocking.
 
 ```fastlang
-type ContactNode = struct {
+data ContactNode : app v1 {
     contact_id: bytes(16),
+    user_id: bytes(32),
     display_name: bytes(128),
+    phone_number: string,
+    email: string,
     signing_pubkey: bytes(2592),
     encryption_pubkey: bytes(1568),
     security_tier: u8,
     verified_at: u64,
 }
+    store graph
+    govern lex esn/global/org/polylabs/messenger
+    cortex {
+        redact [phone_number, email]
+        obfuscate [display_name, user_id]
+        infer on_write
+        on_anomaly alert "messenger-security"
+    }
 
-type GroupNode = struct {
+data GroupNode : app v1 {
     group_id: bytes(16),
     name: bytes(128),
-    created_by: bytes(16),
+    creator_id: bytes(16),
     max_members: u32,
     created_at: u64,
 }
+    store graph
+    govern lex esn/global/org/polylabs/messenger
+    cortex {
+        obfuscate [creator_id]
+        infer on_write
+    }
 
 type KnowsEdge = struct {
     established_at: u64,
@@ -116,7 +133,7 @@ graph contact_network {
     overlay trust_level: u8 curate delta_curate
     overlay last_message_ns: u64 bitmask delta_curate
     overlay message_count: u64 bitmask delta_curate
-    overlay online_status: u8 curate
+    overlay online_status: u8 curate delta_curate
     overlay unread_count: u32 bitmask delta_curate
 
     storage csr {
@@ -125,7 +142,11 @@ graph contact_network {
         cold @nvme,
     }
 
-    ai_feed contact_recommendation
+    ai_feed contact_recommendation {
+        model cortex_eslm
+        features [trust_level, message_frequency, mutual_contacts, verification_status]
+        anomaly_threshold 0.85
+    }
 
     observe contact_network: [trust_level, message_count, online_status] threshold: {
         anomaly_score 0.85
@@ -146,14 +167,25 @@ Key circuits: `add_contact`, `verify_contact`, `block_contact`, `create_group`, 
 Messages form a DAG within each conversation. Replies create parent edges. This enables threading, ordering, and causal consistency for offline/CRDT scenarios.
 
 ```fastlang
-type MessageNode = struct {
+data MessageNode : app v1 {
     message_id: bytes(16),
     conversation_id: bytes(16),
     sender_id: bytes(16),
+    content_hash: bytes(32),
+    content_preview: string,
     sealed_envelope_hash: bytes(32),
     timestamp: u64,
     message_type: u8,
+    classification: u8,
 }
+    store dag
+    govern lex esn/global/org/polylabs/messenger
+    cortex {
+        redact [content_hash, content_preview]
+        infer on_write
+        on_anomaly alert "messenger-security"
+        on_classification auto_apply
+    }
 
 type ReplyToEdge = struct {
     reply_type: u8,
@@ -187,19 +219,31 @@ dag message_thread {
     edge ReactionEdge
 
     enforce acyclic
+    sign ml_dsa_87
 
     overlay read_status: u8 curate delta_curate
-    overlay expiration_ns: u64 curate
+    overlay expiration_ns: u64 curate delta_curate
     overlay reaction_count: u32 bitmask delta_curate
     overlay delivery_status: u8 curate delta_curate
+    overlay classification_level: u8 curate delta_curate
 
-    storage csr {
+    storage merkle_csr {
         hot @bram,
         warm @ddr,
         cold @nvme,
     }
 
-    observe message_thread: [delivery_status, expiration_ns] threshold: {
+    attest povc {
+        witness threshold(2, 3)
+    }
+
+    ai_feed message_anomaly {
+        model cortex_eslm
+        features [send_rate, burst_pattern, reply_depth, conversation_velocity]
+        anomaly_threshold 0.8
+    }
+
+    observe message_thread: [delivery_status, expiration_ns, classification_level] threshold: {
         anomaly_score 0.8
         baseline_window 60
     }
@@ -218,16 +262,31 @@ Key circuits: `send_message`, `receive_message`, `mark_read`, `add_reaction`, `d
 The blind relay network is a graph. Relay nodes and routes are typed with real-time overlays for latency, capacity, and cover traffic. The AI feed selects optimal routes.
 
 ```fastlang
-type RelayNode = struct {
+data RelayNode : app v1 {
     relay_id: bytes(16),
+    endpoint_address: bytes(256),
     region: bytes(8),
+    jurisdiction: bytes(8),
     capacity: u32,
     pubkey: bytes(2592),
+    encryption_pk: bytes(1568),
+    registered_at: u64,
+    last_heartbeat: u64,
 }
+    store graph
+    govern lex esn/global/org/polylabs/messenger/relay
+    cortex {
+        redact [endpoint_address]
+        obfuscate [jurisdiction]
+        infer on_read
+        on_anomaly alert "messenger-ops"
+    }
 
 type RouteEdge = struct {
     hop_index: u8,
     established_at: u64,
+    latency_ms: u32,
+    bandwidth_mbps: u32,
 }
 
 graph relay_mesh {
@@ -236,7 +295,7 @@ graph relay_mesh {
 
     overlay latency_ns: u64 bitmask delta_curate
     overlay capacity_remaining: u32 bitmask delta_curate
-    overlay cover_traffic_rate: u32 bitmask
+    overlay cover_traffic_rate: u32 bitmask delta_curate
     overlay load_pct: u8 curate delta_curate
 
     storage csr {
@@ -245,7 +304,11 @@ graph relay_mesh {
         cold @nvme,
     }
 
-    ai_feed relay_selection
+    ai_feed relay_selection {
+        model cortex_eslm
+        features [latency_ns, load_pct, capacity_remaining, jurisdiction_diversity, cover_traffic_rate]
+        anomaly_threshold 0.8
+    }
 
     observe relay_mesh: [latency_ns, load_pct, capacity_remaining] threshold: {
         anomaly_score 0.8
@@ -260,6 +323,64 @@ series relay_series: relay_mesh
 ```
 
 Key circuits: `register_relay`, `select_route`, `update_relay_health`, `rotate_route`.
+
+---
+
+## Stratum & Cortex Integration
+
+Poly Messenger's three graph/DAG constructs — `contact_network`, `message_thread`, and `relay_mesh` — compose Stratum storage bindings and Cortex AI governance at the data-declaration level. Every node type declares its storage tier, lex governance path, and Cortex visibility policy inline.
+
+### Stratum Storage Bindings
+
+#### Contact Network & Relay Mesh (Graph — CSR)
+
+| Tier | Backing | Purpose |
+|------|---------|---------|
+| `hot @bram` | Block RAM (FPGA) / L1 cache | Online status overlays, active relay health, trust levels |
+| `warm @ddr` | DDR5 DRAM | Full contact graph, group membership, relay topology |
+| `cold @nvme` | NVMe SSD / scatter-cas | Archived contacts, historical trust data, decommissioned relays |
+
+#### Message Thread (DAG — Merkle-CSR)
+
+The conversation DAG uses `storage merkle_csr` instead of plain `csr` — every node insertion is hash-chained into a Merkle tree, providing cryptographic proof of message ordering and integrity. Combined with `sign ml_dsa_87` (ML-DSA-87 PQ signature on every DAG mutation) and `attest povc { witness threshold(2, 3) }` (2-of-3 witness attestation), this creates a triple-verified causal history.
+
+| Tier | Backing | Purpose |
+|------|---------|---------|
+| `hot @bram` | Block RAM (FPGA) / L1 cache | Active conversation DAG heads, delivery status overlays |
+| `warm @ddr` | DDR5 DRAM | Full message DAGs for active conversations |
+| `cold @nvme` | NVMe SSD / scatter-cas | Expired/deleted message tombstones, archived conversations |
+
+#### Series
+
+All three constructs produce `merkle_chain true`, `lattice_imprint true`, `witness_attest true` series — tamper-evident, lattice-timestamped, PoVC-witnessed audit logs for every graph/DAG mutation.
+
+### Cortex Visibility Policies
+
+Each `data` declaration carries a `cortex {}` block governing what the Cortex AI inference layer can access:
+
+| Data Type | Graph | Policy | Effect |
+|-----------|-------|--------|--------|
+| **ContactNode** | `contact_network` | `redact [phone_number, email]`, `obfuscate [display_name, user_id]`, `infer on_write`, `on_anomaly alert "messenger-security"` | PII is fully stripped or hashed. Cortex sees contact patterns (trust levels, verification status, mutual contacts) but not identity. Anomalies route to security team. |
+| **GroupNode** | `contact_network` | `obfuscate [creator_id]`, `infer on_write` | Creator identity hashed for group creation pattern analysis. |
+| **MessageNode** | `message_thread` | `redact [content_hash, content_preview]`, `infer on_write`, `on_anomaly alert "messenger-security"`, `on_classification auto_apply` | Message content is fully opaque to Cortex. Inference operates on metadata only (send rate, burst patterns, reply depth). Classification labels auto-apply from inference. |
+| **RelayNode** | `relay_mesh` | `redact [endpoint_address]`, `obfuscate [jurisdiction]`, `infer on_read`, `on_anomaly alert "messenger-ops"` | Relay endpoints are stripped. Jurisdiction is hashed. Cortex reads relay health for route optimization but cannot reconstruct the network topology. |
+
+### Inference Triggers
+
+- **`infer on_write`** (ContactNode, GroupNode, MessageNode): Cortex runs inference on every mutation — new contacts, group changes, message sends. The `contact_recommendation` AI feed scores trust patterns; the `message_anomaly` AI feed detects burst patterns and conversation velocity anomalies.
+- **`infer on_read`** (RelayNode): Cortex inference triggers on relay health reads, enabling real-time route scoring via the `relay_selection` AI feed without requiring write-path latency.
+- **Anomaly thresholds**: Contact network at 0.85 (120s window), message thread at 0.8 (60s window), relay mesh at 0.8 (30s window) — progressively tighter for lower-latency constructs.
+
+### Feedback Handlers
+
+- **`on_anomaly alert "messenger-security"`**: Contact and message anomalies (unusual contact addition patterns, message bursts, verification failures) route to the messenger security team via StreamSight.
+- **`on_anomaly alert "messenger-ops"`**: Relay anomalies (load spikes, latency degradation, heartbeat failures) route to the messenger ops team.
+- **`on_classification auto_apply`**: MessageNode classification labels (e.g., spam detection, content policy) auto-apply from Cortex inference without human review — the `classification_level` overlay updates in-band.
+- **State machine integration**: `message_lifecycle` transitions feed into anomaly detection (`li_anomaly_detection true`). Rapid SENDING→FAILED cycles or mass deletion triggers Cortex scoring.
+
+### Quantum State (.q) Capability
+
+All graph/DAG data is `.q`-ready. The merkle-CSR message DAG with ML-DSA-87 signing provides the cryptographic substrate for quantum-state snapshots. When hardware targets support it, each series can checkpoint into `.q` quantum-committed snapshots — lattice-imprinted, witness-attested point-in-time states verifiable against the merkle chain without full replay. For the relay mesh, `.q` snapshots capture topology state for forensic analysis of routing decisions.
 
 ---
 
