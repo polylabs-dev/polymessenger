@@ -1,4 +1,4 @@
-// Poly Messenger Classify — Message content classification and ESLM moderation
+// Poly Messenger Classify — Message content classification and ESLM moderation (v0.11.0)
 //
 // Lex Architecture:
 //   esn/global/org/polylabs/messenger/classify
@@ -11,47 +11,89 @@
 // Moderation actions:
 //   ALLOW, WARN, QUARANTINE, BLOCK
 
-type ContentClassification = struct {
+// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+
+data ContentClassification : messenger v1 {
     message_hash: bytes(32),
     category: u8,
     confidence: u16,
     subcategories: [u8; 4],
     classified_at: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/classify
+    cortex {
+        redact [message_hash]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type ModerationResult = struct {
+data ModerationResult : messenger v1 {
     message_hash: bytes(32),
     action: u8,
     reason_code: u16,
     user_overridable: bool,
     expires_at: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/classify
+    cortex {
+        redact [message_hash]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type PhishingSignal = struct {
+data PhishingSignal : messenger v1 {
     url_hash: bytes(32),
     domain_similarity: u16,
     link_mismatch: bool,
     urgency_score: u16,
     credential_request: bool,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/classify
+    cortex {
+        redact [url_hash]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type SpamSignal = struct {
+data SpamSignal : messenger v1 {
     message_hash: bytes(32),
     repetition_score: u16,
     sender_reputation: u16,
     bulk_pattern: bool,
     contact_age_hours: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/classify
+    cortex {
+        redact [message_hash]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-// --- Classify message content using on-device ESLM ---
+// ── Streams ─────────────────────────────────────────────────────
+
+stream messenger_events: event<ContentClassification>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
+// ── Circuits ────────────────────────────────────────────────────
+
+/// Classify message content using on-device ESLM
 circuit classify_message(content: bytes, sender_id: bytes(16), conversation_id: bytes(16)) -> ContentClassification
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/classify
+    precision C
     meters [compute_cycles, memory_bytes]
     observe metrics: [classifications, classification_latency_ms, category_distribution]
     monitor "classification_latency" { classification_latency_ms < 50 }
     invariant "on_device_only" { no_network_calls }
     invariant "content_never_exfiltrated" { content stays local }
+    property safety "content_privacy" { message content never leaves device boundary }
+    property liveness "classification_completes" { eventually(category assigned) }
+    cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_query, now]
 {
     let content_hash = sha3_256(content)
@@ -66,23 +108,28 @@ circuit classify_message(content: bytes, sender_id: bytes(16), conversation_id: 
     let confidence = scores[top_category]
     let subcats = top_k(scores, 4)
 
-    ContentClassification {
+    let result = ContentClassification {
         message_hash: content_hash,
         category: top_category,
         confidence: confidence,
         subcategories: subcats,
         classified_at: ts,
     }
+    emit(messenger_events, result)
+    result
 }
 
-// --- Check for spam patterns using sender reputation and message features ---
+/// Check for spam patterns using sender reputation and message features
 circuit check_spam(content: bytes, sender_id: bytes(16), contact_age_hours: u64) -> SpamSignal
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/classify
+    precision C
     meters [compute_cycles]
     observe metrics: [spam_checks, spam_detected, false_positive_rate]
     monitor "spam_false_positive" { false_positive_rate < 0.02 }
     invariant "on_device_only" { no_network_calls }
+    property safety "no_content_exfil" { content bytes never transmitted }
+    cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_query]
 {
     let msg_hash = sha3_256(content)
@@ -100,14 +147,17 @@ circuit check_spam(content: bytes, sender_id: bytes(16), contact_age_hours: u64)
     }
 }
 
-// --- Detect phishing attempts in message URLs and text ---
+/// Detect phishing attempts in message URLs and text
 circuit detect_phishing(content: bytes, known_contacts: u32) -> PhishingSignal
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/classify
+    precision C
     meters [compute_cycles]
     observe metrics: [phishing_checks, phishing_detected, url_extractions]
     monitor "phishing_detection_rate" { phishing_detected > 0 implies alert_raised }
     invariant "on_device_only" { no_network_calls }
+    property safety "url_privacy" { extracted URLs never leave device }
+    cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_query]
 {
     let urls = extract_urls(content)
@@ -126,7 +176,7 @@ circuit detect_phishing(content: bytes, known_contacts: u32) -> PhishingSignal
     }
 }
 
-// --- Apply moderation policy based on classification and signals ---
+/// Apply moderation policy based on classification and signals
 circuit moderate_content(
     classification: ContentClassification,
     spam: SpamSignal,
@@ -135,11 +185,16 @@ circuit moderate_content(
 ) -> ModerationResult
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/classify
+    precision C
     meters [compute_cycles]
     observe metrics: [moderation_actions, blocks, warnings, quarantines, user_overrides]
     monitor "block_rate" { blocks / moderation_actions < 0.05 }
     invariant "safe_always_allowed" { category == SAFE implies action == ALLOW }
     invariant "on_device_only" { no_network_calls }
+    property safety "moderation_consistency" { same inputs always produce same action }
+    cortex policy: "content_moderation_policy"
+    cortex on_anomaly: alert "messenger-team"
+    cortex on_block: quarantine "flagged_content"
     wasm_abi [now]
 {
     let ts = now()

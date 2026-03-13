@@ -1,0 +1,7 @@
+.es/
+target/
+*.wasm
+*.o
+*.so
+*.dylib
+.DS_Store

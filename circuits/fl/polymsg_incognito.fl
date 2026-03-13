@@ -1,0 +1,399 @@
+/// Poly Messenger Incognito — Incognito mode activation and cover traffic (v0.11.0)
+/// Stratum: kv store + lex governance under esn/global/org/polylabs/messenger/incognito
+/// Cortex: redaction, write-time inference, anomaly alerting
+///
+/// Incognito mode is a compiled WASM circuit — no UI toggle.
+/// Activation is programmatic only, triggered by security policy or user SDK call.
+/// Traffic mimicry integration ensures cover traffic is statistically
+/// indistinguishable from real messaging patterns.
+///
+/// govern lex esn/global/org/polylabs/messenger/incognito
+
+import polykit_blind_relay from "../../polykit/circuits/fl/apps/polykit_blind_relay.fl"
+
+// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+
+data IncognitoConfig : messenger v1 {
+    session_id: bytes(32),
+    cover_rate_per_second: u32,
+    mimicry_profile: u8,
+    jitter_range_ms: u32,
+    max_session_duration_ms: u64,
+    route_rotation_interval_ms: u64,
+    padding_size: u32,
+    enabled: bool,
+}
+    store kv
+    govern lex esn/global/org/polylabs/messenger/incognito
+    cortex {
+        redact [session_id]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+data IncognitoSession : messenger v1 {
+    session_id: bytes(32),
+    user_id: bytes(16),
+    activated_at: u64,
+    expires_at: u64,
+    cover_packets_sent: u64,
+    real_packets_sent: u64,
+    cover_ratio: f64,
+    route_rotations: u64,
+    active: bool,
+    metadata_leak_detected: bool,
+}
+    store kv
+    govern lex esn/global/org/polylabs/messenger/incognito
+    cortex {
+        redact [session_id, user_id]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+data CoverPacket : messenger v1 {
+    packet_id: bytes(32),
+    session_id: bytes(32),
+    payload: bytes(4096),
+    generated_at: u64,
+    jitter_applied_ms: u32,
+}
+    store kv
+    govern lex esn/global/org/polylabs/messenger/incognito
+    cortex {
+        redact [packet_id, session_id, payload]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+// ── Streams ─────────────────────────────────────────────────────
+
+stream incognito_events: event<IncognitoSession>
+    retention 30d
+    consumers [streamsight]
+
+stream messenger_events: event<IncognitoSession>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
+// ── Circuits ────────────────────────────────────────────────────
+
+/// Activate incognito mode for a user session (compiled WASM, no UI toggle)
+@guard(block_on: already_active, config_invalid)
+circuit activate_incognito(
+    user_id: bytes(16),
+    config: IncognitoConfig,
+) -> IncognitoSession
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/incognito
+    precision C
+    constant_time true
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [incognito_activations, active_incognito_sessions, activation_latency_us]
+    monitor "incognito_activation" { activation_latency_us < 500 }
+    invariant "config_valid" { config.cover_rate_per_second > 0 and config.padding_size >= 4096 }
+    invariant "session_unique" { session_id not already active }
+    property safety "no_metadata_leak" { no observable difference between incognito and normal traffic }
+    property liveness "session_activates" { eventually(active == true) }
+    cortex policy: "incognito_activation_policy"
+    cortex on_anomaly: alert "messenger-team"
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let ts = now()
+    let session_seed = blake3(concat(user_id, config.session_id, u64_to_bytes(ts)))
+    let session_id = sha3_256(session_seed)
+    let expires = ts + config.max_session_duration_ms
+
+    let session = IncognitoSession {
+        session_id: bit_slice(session_id, 0, 256),
+        user_id: user_id,
+        activated_at: ts,
+        expires_at: expires,
+        cover_packets_sent: 0,
+        real_packets_sent: 0,
+        cover_ratio: 0.0,
+        route_rotations: 0,
+        active: true,
+        metadata_leak_detected: false,
+    }
+    store(session.session_id, session)
+    emit(incognito_events, session)
+    emit(messenger_events, session)
+    session
+}
+
+/// Generate cover traffic that is indistinguishable from real messages
+@guard(block_on: session_expired, session_inactive)
+circuit generate_cover_traffic(
+    session: IncognitoSession,
+    config: IncognitoConfig,
+) -> CoverPacket
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/incognito
+    precision C
+    blind full
+    constant_time true
+    meters [compute_cycles, bandwidth_bytes]
+    observe metrics: [cover_packets_generated, cover_ratio, cover_jitter_applied_ms, cover_bandwidth_bytes]
+    monitor "cover_ratio" { cover_ratio >= 0.3 }
+    invariant "constant_packet_size" { len(payload) == 4096 }
+    invariant "timing_indistinguishable" { jitter within config.jitter_range_ms }
+    property safety "no_metadata_leak" { cover traffic statistically indistinguishable from real traffic }
+    property liveness "cover_continuous" { cover packets generated at configured rate }
+    cortex on_anomaly: alert "messenger-team"
+    fuzz_target
+{
+    let ts = now()
+
+    if !session.active or ts > session.expires_at {
+        return null
+    }
+
+    let seed = blake3(concat(session.session_id, u64_to_bytes(ts)))
+    let random_payload = csprng(seed, config.padding_size)
+    let padded = pad_to_size(random_payload, 4096)
+
+    let jitter_seed = blake3(concat(seed, 0x01))
+    let jitter = csprng_u32(jitter_seed) % config.jitter_range_ms
+    let delayed = delay_ms(padded, jitter)
+
+    let packet_id = sha3_256(concat(seed, u64_to_bytes(ts)))
+
+    CoverPacket {
+        packet_id: packet_id,
+        session_id: session.session_id,
+        payload: padded,
+        generated_at: ts,
+        jitter_applied_ms: jitter,
+    }
+}
+
+/// Deactivate an incognito session
+circuit deactivate_incognito(session_id: bytes(32), user_id: bytes(16)) -> IncognitoSession
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/incognito
+    precision C
+    constant_time true
+    meters [compute_cycles]
+    observe metrics: [incognito_deactivations, session_duration_ms]
+    invariant "session_exists" { load(session_id) != null }
+    invariant "user_authorized" { session.user_id == user_id }
+    property safety "clean_deactivation" { all cover traffic ceases after deactivation }
+    wasm_abi [eslite_query, eslite_insert, now]
+{
+    let session = load(session_id)
+    if session == null or session.user_id != user_id { return null }
+    let ts = now()
+    let cover_ratio = if session.real_packets_sent > 0 {
+        session.cover_packets_sent / (session.cover_packets_sent + session.real_packets_sent)
+    } else {
+        1.0
+    }
+
+    let deactivated = IncognitoSession {
+        session_id: session.session_id,
+        user_id: session.user_id,
+        activated_at: session.activated_at,
+        expires_at: ts,
+        cover_packets_sent: session.cover_packets_sent,
+        real_packets_sent: session.real_packets_sent,
+        cover_ratio: cover_ratio,
+        route_rotations: session.route_rotations,
+        active: false,
+        metadata_leak_detected: session.metadata_leak_detected,
+    }
+    store(session_id, deactivated)
+    emit(incognito_events, deactivated)
+    deactivated
+}
+
+/// Check for metadata leaks in an active incognito session
+circuit check_metadata_leak(session: IncognitoSession) -> bool
+    profile poly_framework_sensitive
+    lex esn/global/org/polylabs/messenger/incognito
+    precision C
+    constant_time true
+    meters [compute_cycles]
+    observe metrics: [leak_checks, leaks_detected, false_positive_leaks]
+    monitor "leak_detection" { leaks_detected == 0 implies healthy }
+    invariant "session_active" { session.active == true }
+    property safety "no_metadata_leak" { timing and size analysis reveals no user identity }
+    cortex on_anomaly: alert "messenger-team"
+{
+    let cover_ratio = if session.real_packets_sent > 0 {
+        session.cover_packets_sent / (session.cover_packets_sent + session.real_packets_sent)
+    } else {
+        1.0
+    }
+
+    let ratio_ok = cover_ratio >= 0.2
+    let no_burst = session.real_packets_sent < session.cover_packets_sent * 5
+    let rotation_ok = session.route_rotations > 0
+    let leak_detected = !ratio_ok or !no_burst or !rotation_ok
+
+    if leak_detected {
+        let updated = IncognitoSession {
+            session_id: session.session_id,
+            user_id: session.user_id,
+            activated_at: session.activated_at,
+            expires_at: session.expires_at,
+            cover_packets_sent: session.cover_packets_sent,
+            real_packets_sent: session.real_packets_sent,
+            cover_ratio: cover_ratio,
+            route_rotations: session.route_rotations,
+            active: session.active,
+            metadata_leak_detected: true,
+        }
+        store(session.session_id, updated)
+    }
+
+    leak_detected
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "incognito_health" {
+    assert metric("cover_ratio") >= 0.2
+    window 60s
+    severity critical
+}
+
+monitor "incognito_session_count" {
+    assert metric("active_incognito_sessions") >= 0
+    window 60s
+    severity warning
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "activate_incognito_session" {
+    circuit: activate_incognito
+    input {
+        user_id: test_id("alice")
+        config: IncognitoConfig {
+            session_id: test_id("incognito_1"),
+            cover_rate_per_second: 10,
+            mimicry_profile: 1,
+            jitter_range_ms: 100,
+            max_session_duration_ms: 3600000,
+            route_rotation_interval_ms: 300000,
+            padding_size: 4096,
+            enabled: true,
+        }
+    }
+    assert {
+        result.active == true
+        result.user_id == input.user_id
+        result.cover_packets_sent == 0
+        result.real_packets_sent == 0
+        result.metadata_leak_detected == false
+    }
+}
+
+test golden "cover_traffic_constant_size" {
+    circuit: generate_cover_traffic
+    input {
+        session: IncognitoSession {
+            session_id: test_id("session_1"),
+            user_id: test_id("alice"),
+            activated_at: 1000000,
+            expires_at: 4600000,
+            cover_packets_sent: 100,
+            real_packets_sent: 50,
+            cover_ratio: 0.67,
+            route_rotations: 2,
+            active: true,
+            metadata_leak_detected: false,
+        }
+        config: IncognitoConfig {
+            session_id: test_id("session_1"),
+            cover_rate_per_second: 10,
+            mimicry_profile: 1,
+            jitter_range_ms: 100,
+            max_session_duration_ms: 3600000,
+            route_rotation_interval_ms: 300000,
+            padding_size: 4096,
+            enabled: true,
+        }
+    }
+    assert {
+        result != null
+        len(result.payload) == 4096
+        result.session_id == input.session.session_id
+        result.jitter_applied_ms <= input.config.jitter_range_ms
+    }
+}
+
+test golden "deactivate_incognito_session" {
+    circuit: deactivate_incognito
+    input {
+        session_id: test_id("session_1")
+        user_id: test_id("alice")
+    }
+    setup {
+        mock load(test_id("session_1")) -> IncognitoSession {
+            session_id: test_id("session_1"),
+            user_id: test_id("alice"),
+            activated_at: 1000000,
+            expires_at: 4600000,
+            cover_packets_sent: 500,
+            real_packets_sent: 200,
+            cover_ratio: 0.71,
+            route_rotations: 5,
+            active: true,
+            metadata_leak_detected: false,
+        }
+    }
+    assert {
+        result.active == false
+        result.session_id == input.session_id
+        result.cover_packets_sent == 500
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}
+
+kat_vector "blake3_empty" {
+    function: "blake3"
+    input: bytes("")
+    expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
+}
+
+// ── Fuzz targets ────────────────────────────────────────────────
+
+fuzz_target "generate_cover_traffic_fuzz" {
+    circuit: generate_cover_traffic
+    inputs {
+        session_id: bytes(32)
+        user_id: bytes(16)
+        cover_rate: u32
+        jitter_range_ms: u32
+        padding_size: u32
+    }
+    assert {
+        no_panic
+        constant_time true
+        result == null or len(result.payload) == 4096
+    }
+}
+
+fuzz_target "activate_incognito_fuzz" {
+    circuit: activate_incognito
+    inputs {
+        user_id: bytes(16)
+        session_id: bytes(32)
+        cover_rate: u32
+        max_duration: u64
+    }
+    assert {
+        no_panic
+        constant_time true
+        result.active == true
+    }
+}

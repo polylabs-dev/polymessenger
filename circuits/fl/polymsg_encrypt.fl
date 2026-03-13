@@ -1,4 +1,4 @@
-// Poly Messenger Encrypt — PQ end-to-end message encryption
+// Poly Messenger Encrypt — PQ end-to-end message encryption (v0.11.0)
 //
 // Lex Architecture:
 //   esn/global/org/polylabs/messenger/encrypt
@@ -13,11 +13,15 @@
 import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
 import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
 
+// ── Type Aliases ─────────────────────────────────────────────────
+
 type SessionKey = bytes(32)
 type MessageKey = bytes(32)
 type Nonce = bytes(12)
 
-type EncryptedMessage = struct {
+// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+
+data EncryptedMessage : messenger v1 {
     ciphertext: bytes,
     nonce: Nonce,
     tag: bytes(16),
@@ -26,16 +30,30 @@ type EncryptedMessage = struct {
     sequence: u64,
     timestamp_ms: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/encrypt
+    cortex {
+        redact [ciphertext, nonce, tag]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type DecryptedMessage = struct {
+data DecryptedMessage : messenger v1 {
     plaintext: bytes,
     sender_id: bytes(16),
     session_id: bytes(32),
     sequence: u64,
     verified: bool,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/encrypt
+    cortex {
+        redact [plaintext]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type SessionEstablishment = struct {
+data SessionEstablishment : messenger v1 {
     session_id: bytes(32),
     session_key: SessionKey,
     kem_ciphertext: bytes(1568),
@@ -43,18 +61,41 @@ type SessionEstablishment = struct {
     responder_id: bytes(16),
     established_at: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/encrypt
+    cortex {
+        redact [session_key, kem_ciphertext]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type SessionRotation = struct {
+data SessionRotation : messenger v1 {
     session_id: bytes(32),
     new_key: SessionKey,
     old_key_hash: bytes(32),
     rotation_index: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/encrypt
+    cortex {
+        redact [new_key, old_key_hash]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+// ── Streams ─────────────────────────────────────────────────────
 
 stream encrypt_events: event<EncryptedMessage>
     | throttle 5000/s burst 10000
 
-// --- Establish a new encrypted session via ML-KEM-1024 ---
+stream messenger_events: event<EncryptedMessage>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
+// ── Circuits ────────────────────────────────────────────────────
+
+/// Establish a new encrypted session via ML-KEM-1024
+@guard(block_on: invalid_pk, replay_session)
 circuit establish_session(
     initiator_sk: bytes(3168),
     responder_pk: bytes(1568),
@@ -63,13 +104,20 @@ circuit establish_session(
 ) -> SessionEstablishment
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/encrypt
+    precision C
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
     observe metrics: [sessions_established, kem_encapsulations, session_latency_ms]
     monitor "session_establishment_latency" { session_latency_ms < 100 }
     invariant "shared_secret_entropy" { len(shared_secret) == 32 }
     invariant "session_id_unique" { session_id != prior_session_id }
+    property safety "session_key_confidentiality" { session_key never appears in logs or telemetry }
+    property liveness "session_completes" { eventually(session_id != empty) }
+    cortex policy: "encrypt_session_policy"
+    cortex on_anomaly: alert "messenger-team"
+    cortex on_block: log "session_blocked"
     wasm_abi [eslite_insert, stream_emit, now]
+    fuzz_target
 {
     let kem_result = mlkem_encaps(responder_pk)
     let shared_secret = mlkem_decaps(initiator_sk, kem_result)
@@ -89,7 +137,8 @@ circuit establish_session(
     establishment
 }
 
-// --- Encrypt a message with AES-256-GCM under the current session key ---
+/// Encrypt a message with AES-256-GCM under the current session key
+@guard(block_on: invalid_session, rate_exceeded)
 circuit encrypt_message(
     plaintext: bytes,
     session_key: SessionKey,
@@ -99,13 +148,17 @@ circuit encrypt_message(
 ) -> EncryptedMessage
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/encrypt
+    precision C
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
     observe metrics: [messages_encrypted, encryption_latency_us, ciphertext_bytes]
     monitor "encrypt_latency" { encryption_latency_us < 500 }
     invariant "ciphertext_expansion" { len(ciphertext) >= len(plaintext) }
     invariant "nonce_uniqueness" { nonce != prior_nonce }
+    property safety "plaintext_never_stored" { plaintext not persisted after encryption }
+    cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_insert, stream_emit, now]
+    fuzz_target
 {
     let message_key = hkdf_sha3(session_key, concat(session_id, u64_to_bytes(sequence)), 32)
     let nonce_seed = blake3(concat(message_key, u64_to_bytes(sequence)))
@@ -123,22 +176,28 @@ circuit encrypt_message(
         timestamp_ms: ts,
     }
     emit(encrypt_events, msg)
+    emit(messenger_events, msg)
     msg
 }
 
-// --- Decrypt a message with AES-256-GCM under the current session key ---
+/// Decrypt a message with AES-256-GCM under the current session key
+@guard(block_on: invalid_session, tampered_ciphertext)
 circuit decrypt_message(
     encrypted: EncryptedMessage,
     session_key: SessionKey,
 ) -> DecryptedMessage
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/encrypt
+    precision C
     constant_time true
     meters [compute_cycles, crypto_ops]
     observe metrics: [messages_decrypted, decryption_failures, decryption_latency_us]
     monitor "decrypt_failure_rate" { decryption_failures / messages_decrypted < 0.01 }
     invariant "tag_verified" { tag_valid == true }
+    property safety "key_not_leaked" { session_key not in output or logs }
+    cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_query]
+    fuzz_target
 {
     let message_key = hkdf_sha3(session_key, concat(encrypted.session_id, u64_to_bytes(encrypted.sequence)), 32)
     let aad = concat(encrypted.sender_id, encrypted.session_id, u64_to_bytes(encrypted.sequence))
@@ -152,7 +211,8 @@ circuit decrypt_message(
     }
 }
 
-// --- Rotate the session key using HKDF chain derivation ---
+/// Rotate the session key using HKDF chain derivation
+@guard(block_on: stale_session, rotation_mismatch)
 circuit rotate_session_key(
     current_key: SessionKey,
     session_id: bytes(32),
@@ -160,13 +220,17 @@ circuit rotate_session_key(
 ) -> SessionRotation
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/encrypt
+    precision C
     constant_time true
     meters [compute_cycles, crypto_ops]
     observe metrics: [key_rotations, rotation_latency_us]
     monitor "rotation_frequency" { key_rotations > 0 }
     invariant "forward_secrecy" { new_key != current_key }
     invariant "old_key_erased" { zeroize(current_key) after return }
+    property safety "forward_secrecy_guarantee" { compromise of new_key cannot recover current_key }
+    cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_insert]
+    fuzz_target
 {
     let rotation_context = concat(session_id, u64_to_bytes(rotation_index))
     let new_key = hkdf_sha3(current_key, rotation_context, 32)
@@ -311,5 +375,19 @@ fuzz_target "session_establish_fuzz" {
         no_panic
         constant_time true
         len(result.session_key) == 32
+    }
+}
+
+fuzz_target "rotate_session_key_fuzz" {
+    circuit: rotate_session_key
+    inputs {
+        current_key: bytes(32)
+        session_id: bytes(32)
+        rotation_index: u64
+    }
+    assert {
+        no_panic
+        constant_time true
+        result.new_key != current_key
     }
 }

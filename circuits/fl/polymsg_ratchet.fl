@@ -1,4 +1,4 @@
-// Poly Messenger Ratchet — PQ Double Ratchet for forward secrecy
+// Poly Messenger Ratchet — PQ Double Ratchet for forward secrecy (v0.11.0)
 //
 // Lex Architecture:
 //   esn/global/org/polylabs/messenger/ratchet
@@ -15,10 +15,14 @@
 
 import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
 
+// ── Type Aliases ─────────────────────────────────────────────────
+
 type ChainKey = bytes(32)
 type MessageKey = bytes(32)
 
-type RatchetState = struct {
+// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+
+data RatchetState : messenger v1 {
     root_key: bytes(32),
     send_chain_key: ChainKey,
     recv_chain_key: ChainKey,
@@ -30,36 +34,79 @@ type RatchetState = struct {
     previous_send_count: u64,
     skipped_keys: bytes(4096),
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/ratchet
+    cortex {
+        redact [root_key, send_chain_key, recv_chain_key, our_ratchet_keypair_sk, skipped_keys]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type RatchetHeader = struct {
+data RatchetHeader : messenger v1 {
     ratchet_pubkey: bytes(1568),
     previous_chain_length: u64,
     message_index: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/ratchet
+    cortex {
+        redact [ratchet_pubkey]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type RatchetEncryptResult = struct {
+data RatchetEncryptResult : messenger v1 {
     header: RatchetHeader,
     ciphertext: bytes,
     nonce: bytes(12),
     tag: bytes(16),
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/ratchet
+    cortex {
+        redact [ciphertext, nonce, tag]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type RatchetDecryptResult = struct {
+data RatchetDecryptResult : messenger v1 {
     plaintext: bytes,
     updated_state: RatchetState,
     verified: bool,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/ratchet
+    cortex {
+        redact [plaintext]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type SkippedKeyEntry = struct {
+data SkippedKeyEntry : messenger v1 {
     ratchet_pubkey_hash: bytes(32),
     message_index: u64,
     message_key: MessageKey,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/ratchet
+    cortex {
+        redact [message_key, ratchet_pubkey_hash]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+// ── Streams ─────────────────────────────────────────────────────
 
 stream ratchet_events: event<RatchetHeader>
     | throttle 5000/s burst 10000
 
-// --- Initialize a new ratchet from session establishment ---
+stream messenger_events: event<RatchetHeader>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
+// ── Circuits ────────────────────────────────────────────────────
+
+/// Initialize a new ratchet from session establishment
 circuit init_ratchet(
     shared_secret: bytes(32),
     our_pk: bytes(1568),
@@ -69,13 +116,17 @@ circuit init_ratchet(
 ) -> RatchetState
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/ratchet
+    precision C
     constant_time true
     meters [compute_cycles, crypto_ops]
     observe metrics: [ratchets_initialized, init_latency_us]
     monitor "ratchet_init_latency" { init_latency_us < 200 }
     invariant "root_key_entropy" { len(root_key) == 32 }
     invariant "asymmetric_chains" { send_chain_key != recv_chain_key }
+    property safety "key_isolation" { initiator and responder derive independent chains }
+    property liveness "ratchet_ready" { eventually(send_chain_key != empty and recv_chain_key != empty) }
     wasm_abi [eslite_insert, now]
+    fuzz_target
 {
     let kem_shared = mlkem_encaps(their_pk)
     let kem_secret = mlkem_decaps(our_sk, kem_shared)
@@ -108,17 +159,20 @@ circuit init_ratchet(
     }
 }
 
-// --- Advance the send chain and encrypt ---
+/// Advance the send chain and encrypt
 circuit ratchet_encrypt(state: RatchetState, plaintext: bytes) -> (RatchetEncryptResult, RatchetState)
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/ratchet
+    precision C
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
     observe metrics: [ratchet_encryptions, chain_advances, encrypt_latency_us]
     monitor "ratchet_encrypt_latency" { encrypt_latency_us < 300 }
     invariant "forward_secrecy" { old_keys_erased }
     invariant "chain_monotonic" { chain_index strictly increases }
+    property safety "pq_forward_secrecy" { compromise of current state cannot decrypt past messages }
     wasm_abi [eslite_insert, stream_emit]
+    fuzz_target
 {
     let (message_key, next_chain_key) = advance_chain(state.send_chain_key, state.send_chain_index)
     let nonce_seed = blake3(concat(message_key, u64_to_bytes(state.send_chain_index)))
@@ -152,10 +206,11 @@ circuit ratchet_encrypt(state: RatchetState, plaintext: bytes) -> (RatchetEncryp
         tag: tag,
     }
     emit(ratchet_events, header)
+    emit(messenger_events, header)
     (result, new_state)
 }
 
-// --- Perform DH ratchet step if new pubkey, then decrypt ---
+/// Perform DH ratchet step if new pubkey, then decrypt
 circuit ratchet_decrypt(
     state: RatchetState,
     header: RatchetHeader,
@@ -165,13 +220,16 @@ circuit ratchet_decrypt(
 ) -> RatchetDecryptResult
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/ratchet
+    precision C
     constant_time true
     meters [compute_cycles, crypto_ops]
     observe metrics: [ratchet_decryptions, dh_ratchet_steps, skipped_key_lookups, decrypt_failures]
     monitor "decrypt_failure_rate" { decrypt_failures / ratchet_decryptions < 0.01 }
     invariant "forward_secrecy" { old_keys_erased }
     invariant "chain_monotonic" { chain_index strictly increases }
+    property safety "pq_forward_secrecy" { compromise of current state cannot decrypt past messages }
     wasm_abi [eslite_query, eslite_insert]
+    fuzz_target
 {
     let their_pk_hash = sha3_256(header.ratchet_pubkey)
     let current_pk_hash = sha3_256(state.their_ratchet_pubkey)
@@ -229,14 +287,17 @@ circuit ratchet_decrypt(
     }
 }
 
-// --- Derive message key and next chain key from current chain ---
+/// Derive message key and next chain key from current chain
 circuit advance_chain(chain_key: ChainKey, index: u64) -> (MessageKey, ChainKey)
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/ratchet
+    precision C
     constant_time true
     observe metrics: [chain_advances]
     invariant "chain_monotonic" { chain_index strictly increases }
     invariant "key_independence" { message_key != next_chain_key }
+    property safety "key_derivation_deterministic" { same inputs always produce same keys }
+    fuzz_target
 {
     let message_key = sha3_256(concat(chain_key, 0x01, u64_to_bytes(index)))
     let next_chain_key = sha3_256(concat(chain_key, 0x02, u64_to_bytes(index)))
@@ -244,15 +305,17 @@ circuit advance_chain(chain_key: ChainKey, index: u64) -> (MessageKey, ChainKey)
     (message_key, next_chain_key)
 }
 
-// --- Cache skipped message keys for out-of-order delivery ---
+/// Cache skipped message keys for out-of-order delivery
 circuit skip_message_keys(state: RatchetState, current: u64, target: u64) -> RatchetState
     profile poly_framework_sensitive
     lex esn/global/org/polylabs/messenger/ratchet
+    precision C
     constant_time true
     meters [compute_cycles, memory_bytes]
     observe metrics: [keys_skipped, skip_cache_size]
     monitor "skip_limit" { keys_skipped < 256 }
     invariant "bounded_skip" { target - current <= 256 }
+    property safety "skipped_keys_bounded" { skip count never exceeds 256 }
     wasm_abi [eslite_insert]
 {
     let working_chain = state.recv_chain_key

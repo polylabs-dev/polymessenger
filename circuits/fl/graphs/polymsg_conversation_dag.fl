@@ -1,4 +1,4 @@
-/// Poly Messenger Conversation DAG — dag message_thread
+/// Poly Messenger Conversation DAG — dag message_thread (v0.11.0)
 /// Stratum merkle-CSR storage + Cortex AI governance + ML-DSA-87 signing
 /// govern lex esn/global/org/polylabs/messenger
 ///
@@ -11,7 +11,7 @@ import polykit_metering from "../../../polykit/circuits/fl/polykit_metering.fl"
 
 // ── Data: Node types (data + store dag + cortex) ────────────────
 
-data MessageNode : app v1 {
+data MessageNode : messenger v1 {
     message_id: bytes(16),
     conversation_id: bytes(16),
     sender_id: bytes(16),
@@ -43,13 +43,13 @@ type ReactionEdge = struct {
     reacted_at: u64,
 }
 
-// ── State machine ───────────────────────────────────────────────
+// ── State machine (enhanced v0.11.0) ────────────────────────────
 
 state_machine message_lifecycle {
     initial SENDING
     persistence wal
     terminal [DELETED, EXPIRED]
-    li_anomaly_detection true
+    ai_anomaly_detection true
 
     SENDING -> SENT when relay_confirmed
     SENDING -> FAILED when relay_failed guard retry_limit_reached
@@ -104,6 +104,12 @@ series message_series: message_thread
     lattice_imprint true
     witness_attest true
 
+// ── Streams ─────────────────────────────────────────────────────
+
+stream messenger_events: event<MessageNode>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
 // ── Circuits: Message operations ────────────────────────────────
 
 circuit send_message(
@@ -115,14 +121,17 @@ circuit send_message(
 ) -> MessageNode
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles, memory_bytes, bandwidth_bytes]
     observe metrics: [messages_sent, message_dag_size, reply_depth, send_latency_us]
     monitor "send_latency" { send_latency_us < 1000 }
     invariant "dag_acyclic" { no_cycles_after_insert }
     invariant "sender_authenticated" { sender_id verified }
+    property safety "message_integrity" { sealed_envelope_hash immutable after insert }
+    property liveness "message_delivered" { eventually(status reaches DELIVERED or FAILED) }
+    cortex on_anomaly: alert "messenger-security"
     wasm_abi [eslite_insert, stream_emit, now]
 {
     let ts = now()
@@ -152,6 +161,7 @@ circuit send_message(
     overlay_set(message_thread, message_id, read_status, 0)
     overlay_set(message_thread, message_id, classification_level, 0)
     fsm_transition(message_lifecycle, message_id, SENDING)
+    emit(messenger_events, node)
     node
 }
 
@@ -162,13 +172,14 @@ circuit receive_message(
 ) -> bool
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles, bandwidth_bytes]
     observe metrics: [messages_received, receive_latency_us, duplicate_receives]
     monitor "receive_latency" { receive_latency_us < 500 }
     invariant "hash_matches" { stored_hash == sealed_envelope_hash }
+    property safety "envelope_integrity" { sealed_envelope_hash verified before delivery }
     wasm_abi [eslite_query, eslite_insert, now]
 {
     let node = dag_lookup(message_thread, message_id)
@@ -187,12 +198,13 @@ circuit receive_message(
 circuit mark_read(message_id: bytes(16), reader_id: bytes(16)) -> bool
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles]
     observe metrics: [messages_read, read_latency_ms]
     invariant "delivered_before_read" { status >= DELIVERED }
+    property safety "read_receipt_authentic" { reader_id must be conversation participant }
     wasm_abi [eslite_query, eslite_insert, now]
 {
     let current_status = fsm_state(message_lifecycle, message_id)
@@ -217,13 +229,14 @@ circuit add_reaction(
 ) -> bool
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles]
     observe metrics: [reactions_added, reaction_types]
     invariant "message_exists" { dag_lookup(message_id) != null }
     invariant "no_duplicate_reaction" { no_same_reactor_same_emoji }
+    property safety "reaction_idempotent" { duplicate reactions are no-ops }
     wasm_abi [eslite_query, eslite_insert, now]
 {
     let node = dag_lookup(message_thread, message_id)
@@ -244,13 +257,14 @@ circuit add_reaction(
 circuit delete_message(message_id: bytes(16), requester_id: bytes(16)) -> bool
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles]
     observe metrics: [messages_deleted]
     invariant "only_sender_deletes" { requester_id == sender_id }
     invariant "terminal_state" { status becomes DELETED }
+    property safety "delete_authorized" { only message sender can delete }
     wasm_abi [eslite_query, eslite_insert]
 {
     let node = dag_lookup(message_thread, message_id)
@@ -269,13 +283,14 @@ circuit delete_message(message_id: bytes(16), requester_id: bytes(16)) -> bool
 circuit expire_messages(conversation_id: bytes(16), current_time: u64) -> u64
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles, memory_bytes]
     observe metrics: [messages_expired, expiration_scans, expiration_latency_ms]
     monitor "expiration_scan_time" { expiration_latency_ms < 5000 }
     invariant "only_expirable" { has_expiration guard satisfied }
+    property safety "expiration_enforced" { expired messages are tombstoned }
     wasm_abi [eslite_query, eslite_insert]
 {
     let candidates = dag_query(message_thread, conversation_id, "has_expiration")

@@ -1,0 +1,41 @@
+[workspace]
+name = "polymessenger"
+version = "0.11.0"
+
+[platform]
+api_version = "0.11.0"
+min_version = "0.11.0"
+
+[build]
+target = ["wasm32-wasi", "native"]
+opt_level = "3"
+lto = true
+
+[build.wasm]
+features = ["eslite", "stream", "graph", "dag", "cortex", "blind_relay"]
+
+[build.native]
+features = ["eslite", "stream", "graph", "dag", "cortex", "blind_relay", "fuzz"]
+
+[circuits]
+source = "circuits/fl"
+include = ["*.fl", "graphs/*.fl"]
+
+[testing]
+test_vectors = "test_vectors"
+journeys = "testing/journeys"
+fuzz_corpus = ".es/fuzz_corpus"
+
+[signing]
+algorithm = "ml-dsa-87"
+key_id = "polylabs-prime-v1"
+
+[telemetry]
+lex_namespace = "esn/global/org/polylabs/messenger"
+streamsight = true
+cohort_min_size = 50
+
+[cortex]
+default_alert_team = "messenger-team"
+anomaly_threshold = 0.8
+ai_feed_enabled = true

@@ -1,4 +1,4 @@
-/// Poly Messenger Platform Health — Blind relay pattern health monitoring
+/// Poly Messenger Platform Health — Blind relay pattern health monitoring (v0.11.0)
 ///
 /// Aggregates messaging-relay metrics through blinded, cohort-enforced telemetry.
 /// Stratum: kv store + lex governance under esn/global/org/polylabs/messenger.
@@ -15,7 +15,7 @@ import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
 
 // ── Data Declarations with Stratum + Cortex ─────────────────────────
 
-data PlatformMetrics : app v1 {
+data PlatformMetrics : messenger v1 {
     blinded_user_id: bytes(32),
     cohort_ok: bool,
     cohort_size: u32,
@@ -57,6 +57,10 @@ stream messenger_anomaly_events: event<PlatformMetrics>
     retention forever
     consumers [streamsight, governance, alerting]
 
+stream messenger_events: event<PlatformMetrics>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
 // ── Series ──────────────────────────────────────────────────────────
 
 series messenger_health_series: messenger_health_events
@@ -92,6 +96,8 @@ circuit messenger_platform_health(
     property safety "session_isolation" { no_cross_session_data }
     property liveness "eventually_healthy" { eventually(all_healthy == true) }
     monitor "relay_health" { avg_latency_ms < 500 }
+    cortex policy: "platform_health_policy"
+    cortex on_anomaly: alert "messenger-team"
     esz_emit "verify/messenger_health.esz"
     li_feed full_escir true, optimized_ir true, optimization_metadata true
     fuzz_target
@@ -137,7 +143,6 @@ circuit messenger_platform_health(
         network_throughput: network_throughput,
     })
 
-    // Constant-time enforcement: relay timing variance must stay below 1μs (1000ns)
     let constant_time_ok = relay_timing_variance_ns < 1000
     let latency_healthy = relay_latency_avg_ms < 500
     let cover_healthy = cover_traffic_ratio >= 0.10
@@ -185,6 +190,7 @@ circuit messenger_platform_health(
 
     if cohort_ok {
         emit(messenger_health_events, metrics)
+        emit(messenger_events, metrics)
         eslite_insert("messenger_health", sha3_256(serialize(metrics)), metrics)
     }
 
@@ -206,6 +212,9 @@ circuit messenger_anomaly_check(
     streamsight true
     observe metrics: [anomaly_checks, anomaly_detections]
     monitor "anomaly_rate" { anomaly_detections < 50/hr }
+    invariant "window_valid" { window_ms > 0 }
+    property safety "anomaly_isolation" { anomaly data stays within messenger lex namespace }
+    property liveness "anomaly_resolves" { eventually(status == Healthy) }
     cortex {
         ai_feed {
             model "messenger_health_classifier"
@@ -215,6 +224,7 @@ circuit messenger_anomaly_check(
             drift_threshold 0.10
         }
     }
+    cortex on_anomaly: alert "messenger-team"
     test golden "no_anomaly_healthy" {
         let m = [PlatformMetrics {
             blinded_user_id: bytes(32, 0x00),

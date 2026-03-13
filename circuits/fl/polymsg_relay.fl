@@ -1,4 +1,4 @@
-// Poly Messenger Relay — Blind relay routing with cover traffic
+// Poly Messenger Relay — Blind relay routing with cover traffic (v0.11.0)
 //
 // Lex Architecture:
 //   esn/global/org/polylabs/messenger/relay
@@ -14,18 +14,29 @@
 import polykit_blind_relay from "../../polykit/circuits/fl/apps/polykit_blind_relay.fl"
 import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
 
+// ── Type Aliases ─────────────────────────────────────────────────
+
 type RelayId = bytes(16)
 type HopCount = u8
 
-type RelayPacket = struct {
+// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+
+data RelayPacket : messenger v1 {
     onion_layers: bytes(4096),
     packet_id: bytes(32),
     hop_index: HopCount,
     total_hops: HopCount,
     timestamp_ms: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/relay
+    cortex {
+        redact [onion_layers, packet_id]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type RelayRoute = struct {
+data RelayRoute : messenger v1 {
     route_id: bytes(32),
     hops: [RelayId; 5],
     hop_pubkeys: [bytes(1568); 5],
@@ -33,25 +44,54 @@ type RelayRoute = struct {
     created_at: u64,
     expires_at: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/relay
+    cortex {
+        redact [hops, hop_pubkeys]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type CoverTrafficConfig = struct {
+data CoverTrafficConfig : messenger v1 {
     rate_per_second: u32,
     packet_size: u32,
     jitter_ms: u32,
     mimicry_profile: u8,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/relay
+    cortex {
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
 
-type RouteResult = struct {
+data RouteResult : messenger v1 {
     packet: RelayPacket,
     route_id: bytes(32),
     delivered: bool,
     latency_ms: u64,
 }
+    store kv
+    govern lex esn/global/org/polylabs/messenger/relay
+    cortex {
+        redact [route_id]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+// ── Streams ─────────────────────────────────────────────────────
 
 stream relay_events: event<RelayPacket>
     | throttle 10000/s burst 20000
 
-// --- Route an encrypted message through the blind relay network ---
+stream messenger_events: event<RelayPacket>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
+// ── Circuits ────────────────────────────────────────────────────
+
+/// Route an encrypted message through the blind relay network
+@guard(block_on: invalid_route, expired_route, rate_exceeded)
 circuit route_message(
     plaintext_envelope: bytes,
     route: RelayRoute,
@@ -59,6 +99,7 @@ circuit route_message(
 ) -> RouteResult
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
+    precision C
     blind relay
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
@@ -66,6 +107,11 @@ circuit route_message(
     monitor "relay_latency" { relay_latency_ms < 500 }
     invariant "constant_packet_size" { len(packet) == 4096 }
     invariant "sender_hidden" { sender_id not in packet }
+    property safety "sender_anonymity" { no relay learns sender_id }
+    property liveness "message_delivered" { eventually(delivered == true) }
+    cortex policy: "relay_routing_policy"
+    cortex on_anomaly: alert "messenger-ops"
+    cortex on_block: quarantine "suspicious_route"
     wasm_abi [eslite_query, stream_emit, now]
     fuzz_target
 {
@@ -92,6 +138,7 @@ circuit route_message(
         timestamp_ms: ts,
     }
     emit(relay_events, packet)
+    emit(messenger_events, packet)
     RouteResult {
         packet: packet,
         route_id: route.route_id,
@@ -100,7 +147,8 @@ circuit route_message(
     }
 }
 
-// --- Select relay nodes for a route from the relay mesh ---
+/// Select relay nodes for a route from the relay mesh
+@guard(block_on: insufficient_relays, jurisdiction_violation)
 circuit select_relays(
     sender_region: bytes(8),
     recipient_region: bytes(8),
@@ -109,12 +157,15 @@ circuit select_relays(
 ) -> RelayRoute
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
+    precision C
     blind relay
     meters [compute_cycles]
     observe metrics: [route_selections, relay_candidates_evaluated, jurisdiction_diversifications]
     monitor "route_diversity" { unique_jurisdictions >= min_hops }
     invariant "min_hop_count" { total_hops >= min_hops }
     invariant "jurisdiction_diversity" { no_two_consecutive_hops_same_jurisdiction }
+    property safety "route_confidentiality" { full route not visible to any single relay }
+    cortex on_anomaly: alert "messenger-ops"
     wasm_abi [eslite_query, now]
 {
     let ts = now()
@@ -142,10 +193,12 @@ circuit select_relays(
     }
 }
 
-// --- Generate cover traffic to obscure real messaging patterns ---
+/// Generate cover traffic to obscure real messaging patterns
+@guard(block_on: config_invalid)
 circuit generate_cover_traffic(config: CoverTrafficConfig, session_id: bytes(32)) -> RelayPacket
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
+    precision C
     blind full
     constant_time true
     meters [bandwidth_bytes]
@@ -153,6 +206,9 @@ circuit generate_cover_traffic(config: CoverTrafficConfig, session_id: bytes(32)
     monitor "cover_ratio" { cover_ratio >= 0.3 }
     invariant "constant_packet_size" { len(packet) == 4096 }
     invariant "indistinguishable" { cover_packet == real_packet in timing and size }
+    property safety "cover_indistinguishability" { statistical distance between cover and real < epsilon }
+    cortex on_anomaly: alert "messenger-ops"
+    fuzz_target
 {
     let seed = blake3(concat(session_id, u64_to_bytes(now())))
     let random_payload = csprng(seed, config.packet_size)
@@ -170,7 +226,8 @@ circuit generate_cover_traffic(config: CoverTrafficConfig, session_id: bytes(32)
     }
 }
 
-// --- Strip one onion layer at a relay node ---
+/// Strip one onion layer at a relay node
+@guard(block_on: invalid_layer, tampered_packet)
 circuit strip_relay_layer(
     packet: RelayPacket,
     relay_sk: bytes(3168),
@@ -178,6 +235,7 @@ circuit strip_relay_layer(
 ) -> (RelayPacket, RelayId)
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
+    precision C
     blind relay
     constant_time true
     meters [compute_cycles, crypto_ops]
@@ -185,6 +243,9 @@ circuit strip_relay_layer(
     monitor "strip_latency" { strip_latency_us < 200 }
     invariant "constant_packet_size" { len(output_packet) == 4096 }
     invariant "no_sender_leak" { relay learns only next_hop }
+    property safety "layer_isolation" { relay cannot correlate input to previous hops }
+    cortex on_anomaly: alert "messenger-ops"
+    fuzz_target
 {
     let kem_ct = bit_slice(packet.onion_layers, 0, 1568 * 8)
     let tag = bit_slice(packet.onion_layers, 1568 * 8, (1568 + 16) * 8)

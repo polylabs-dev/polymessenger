@@ -1,0 +1,458 @@
+/// Poly Messenger RBAC — Role-Based Access Control graph (v0.11.0)
+/// Stratum graph storage + Cortex AI governance + ML-DSA-87 signing
+/// govern lex esn/global/org/polylabs/messenger/rbac
+///
+/// Roles: User, GroupAdmin, Moderator, Observer
+/// Permissions: can_send, can_moderate, can_admin
+/// Graph models user → group membership with role-based overlays.
+/// AI feed detects anomalous role patterns (privilege escalation, mass admin grants).
+
+import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
+import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+
+// ── Enums ───────────────────────────────────────────────────────
+
+type MessengerRole = enum {
+    User,
+    GroupAdmin,
+    Moderator,
+    Observer,
+}
+
+type Permission = enum {
+    CanSend,
+    CanModerate,
+    CanAdmin,
+}
+
+// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+
+data UserInfo : messenger v1 {
+    user_id: bytes(16),
+    spark_id: bytes(32),
+    display_name: bytes(128),
+    role: MessengerRole,
+    signing_pk: bytes(2592),
+    encryption_pk: bytes(1568),
+    created_at: u64,
+    last_active: u64,
+}
+    store kv
+    govern lex esn/global/org/polylabs/messenger/rbac
+    cortex {
+        redact [spark_id]
+        obfuscate [display_name]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+data GroupInfo : messenger v1 {
+    group_id: bytes(16),
+    name: bytes(128),
+    owner_id: bytes(16),
+    max_members: u32,
+    require_admin_invite: bool,
+    created_at: u64,
+}
+    store kv
+    govern lex esn/global/org/polylabs/messenger/rbac
+    cortex {
+        obfuscate [owner_id]
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+data RoleAssignment : messenger v1 {
+    user_id: bytes(16),
+    group_id: bytes(16),
+    role: MessengerRole,
+    granted_by: bytes(16),
+    granted_at: u64,
+    expires_at: u64,
+}
+    store kv
+    govern lex esn/global/org/polylabs/messenger/rbac
+    cortex {
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+data PermissionCheck : messenger v1 {
+    user_id: bytes(16),
+    group_id: bytes(16),
+    permission: Permission,
+    allowed: bool,
+    checked_at: u64,
+}
+    store kv
+    govern lex esn/global/org/polylabs/messenger/rbac
+    cortex {
+        infer on_write
+        on_anomaly alert "messenger-team"
+    }
+
+// ── Edge types ──────────────────────────────────────────────────
+
+type MemberOfEdge = struct {
+    role: MessengerRole,
+    joined_at: u64,
+}
+
+type AdminOfEdge = struct {
+    granted_at: u64,
+    granted_by: bytes(16),
+}
+
+// ── Graph definition ────────────────────────────────────────────
+
+graph messenger_roles {
+    node User : UserInfo
+    node Group : GroupInfo
+    edge member_of : User -> Group
+    edge admin_of : User -> Group
+
+    overlay permissions on User {
+        can_send,
+        can_moderate,
+        can_admin,
+    }
+
+    storage csr {
+        tier bram { capacity: 10_000 }
+        tier ddr { capacity: 1_000_000 }
+    }
+
+    sign ml_dsa_87
+
+    ai_feed role_patterns {
+        model cortex_eslm
+        features [role_distribution, admin_grant_rate, privilege_escalation_attempts, role_change_frequency]
+        anomaly_threshold 0.75
+    }
+
+    observe messenger_roles: [permissions, role_distribution] threshold: {
+        anomaly_score 0.75
+        baseline_window 60
+    }
+}
+
+series rbac_series: messenger_roles
+    merkle_chain true
+    lattice_imprint true
+    witness_attest true
+
+// ── Streams ─────────────────────────────────────────────────────
+
+stream messenger_events: event<RoleAssignment>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
+stream rbac_audit_events: event<RoleAssignment>
+    retention forever
+    consumers [streamsight, governance, alerting]
+
+// ── Circuits ────────────────────────────────────────────────────
+
+/// Register a user in the RBAC graph
+circuit register_user(
+    spark_id: bytes(32),
+    display_name: bytes(128),
+    signing_pk: bytes(2592),
+    encryption_pk: bytes(1568),
+) -> UserInfo
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/rbac
+    precision C
+    meters [compute_cycles, memory_bytes]
+    observe metrics: [users_registered, rbac_graph_size]
+    monitor "registration_rate" { users_registered > 0 }
+    invariant "unique_user" { user_id not already in graph }
+    invariant "valid_pk" { len(signing_pk) == 2592 }
+    property safety "user_uniqueness" { no duplicate user_ids in graph }
+    property liveness "user_registered" { eventually(user_id in graph) }
+    wasm_abi [eslite_insert, stream_emit, now]
+{
+    let user_id = bit_slice(sha3_256(signing_pk), 0, 128)
+    let ts = now()
+    let user = UserInfo {
+        user_id: user_id,
+        spark_id: spark_id,
+        display_name: display_name,
+        role: MessengerRole::User,
+        signing_pk: signing_pk,
+        encryption_pk: encryption_pk,
+        created_at: ts,
+        last_active: ts,
+    }
+    graph_insert(messenger_roles, user)
+    overlay_set(messenger_roles, user_id, can_send, true)
+    overlay_set(messenger_roles, user_id, can_moderate, false)
+    overlay_set(messenger_roles, user_id, can_admin, false)
+    user
+}
+
+/// Assign a role to a user within a group
+@guard(block_on: unauthorized_grant, role_escalation)
+circuit assign_role(
+    granter_id: bytes(16),
+    user_id: bytes(16),
+    group_id: bytes(16),
+    role: MessengerRole,
+) -> RoleAssignment
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/rbac
+    precision C
+    meters [compute_cycles]
+    observe metrics: [role_assignments, admin_grants, moderator_grants, role_changes]
+    monitor "admin_grant_rate" { admin_grants < 10/hr }
+    invariant "granter_is_admin" { granter has admin_of edge to group }
+    invariant "no_self_escalation" { granter_id != user_id for admin grants }
+    property safety "privilege_escalation_prevented" { only admins can grant admin or moderator roles }
+    cortex policy: "rbac_assignment_policy"
+    cortex on_anomaly: alert "messenger-team"
+    cortex on_block: log "role_assignment_blocked"
+    wasm_abi [eslite_query, eslite_insert, stream_emit, now]
+{
+    let granter_admin = graph_edge_lookup(messenger_roles, granter_id, group_id, admin_of)
+    if granter_admin == null { return null }
+
+    if role == MessengerRole::GroupAdmin and granter_id == user_id { return null }
+
+    let ts = now()
+    let assignment = RoleAssignment {
+        user_id: user_id,
+        group_id: group_id,
+        role: role,
+        granted_by: granter_id,
+        granted_at: ts,
+        expires_at: 0,
+    }
+
+    let member_edge = MemberOfEdge { role: role, joined_at: ts }
+    graph_edge(messenger_roles, user_id, group_id, member_edge)
+
+    match role {
+        GroupAdmin => {
+            let admin_edge = AdminOfEdge { granted_at: ts, granted_by: granter_id }
+            graph_edge(messenger_roles, user_id, group_id, admin_edge)
+            overlay_set(messenger_roles, user_id, can_send, true)
+            overlay_set(messenger_roles, user_id, can_moderate, true)
+            overlay_set(messenger_roles, user_id, can_admin, true)
+        },
+        Moderator => {
+            overlay_set(messenger_roles, user_id, can_send, true)
+            overlay_set(messenger_roles, user_id, can_moderate, true)
+            overlay_set(messenger_roles, user_id, can_admin, false)
+        },
+        User => {
+            overlay_set(messenger_roles, user_id, can_send, true)
+            overlay_set(messenger_roles, user_id, can_moderate, false)
+            overlay_set(messenger_roles, user_id, can_admin, false)
+        },
+        Observer => {
+            overlay_set(messenger_roles, user_id, can_send, false)
+            overlay_set(messenger_roles, user_id, can_moderate, false)
+            overlay_set(messenger_roles, user_id, can_admin, false)
+        },
+    }
+
+    emit(messenger_events, assignment)
+    emit(rbac_audit_events, assignment)
+    assignment
+}
+
+/// Check if a user has a specific permission in a group
+circuit check_permission(
+    user_id: bytes(16),
+    group_id: bytes(16),
+    permission: Permission,
+) -> PermissionCheck
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/rbac
+    precision C
+    meters [compute_cycles]
+    observe metrics: [permission_checks, permission_denied, permission_granted]
+    monitor "denial_rate" { permission_denied / permission_checks < 0.30 }
+    invariant "user_in_group" { member_of edge exists }
+    property safety "permission_consistency" { permission check is deterministic for same state }
+    wasm_abi [eslite_query, now]
+{
+    let ts = now()
+    let membership = graph_edge_lookup(messenger_roles, user_id, group_id, member_of)
+    if membership == null {
+        return PermissionCheck {
+            user_id: user_id,
+            group_id: group_id,
+            permission: permission,
+            allowed: false,
+            checked_at: ts,
+        }
+    }
+
+    let allowed = match permission {
+        CanSend => overlay_get(messenger_roles, user_id, can_send),
+        CanModerate => overlay_get(messenger_roles, user_id, can_moderate),
+        CanAdmin => overlay_get(messenger_roles, user_id, can_admin),
+    }
+
+    PermissionCheck {
+        user_id: user_id,
+        group_id: group_id,
+        permission: permission,
+        allowed: allowed,
+        checked_at: ts,
+    }
+}
+
+/// Revoke a role from a user in a group
+@guard(block_on: unauthorized_revoke, last_admin_removal)
+circuit revoke_role(
+    revoker_id: bytes(16),
+    user_id: bytes(16),
+    group_id: bytes(16),
+) -> bool
+    profile poly_framework_standard
+    lex esn/global/org/polylabs/messenger/rbac
+    precision C
+    meters [compute_cycles]
+    observe metrics: [role_revocations, admin_revocations]
+    invariant "revoker_is_admin" { revoker has admin_of edge to group }
+    invariant "not_last_admin" { at least one admin remains after revocation }
+    property safety "admin_continuity" { group always retains at least one admin }
+    cortex on_anomaly: alert "messenger-team"
+    wasm_abi [eslite_query, eslite_insert, stream_emit, now]
+{
+    let revoker_admin = graph_edge_lookup(messenger_roles, revoker_id, group_id, admin_of)
+    if revoker_admin == null { return false }
+
+    let admin_count = graph_edge_count_typed(messenger_roles, group_id, admin_of)
+    let user_is_admin = graph_edge_lookup(messenger_roles, user_id, group_id, admin_of) != null
+    if user_is_admin and admin_count <= 1 { return false }
+
+    graph_edge_remove(messenger_roles, user_id, group_id, member_of)
+    graph_edge_remove(messenger_roles, user_id, group_id, admin_of)
+    overlay_set(messenger_roles, user_id, can_send, true)
+    overlay_set(messenger_roles, user_id, can_moderate, false)
+    overlay_set(messenger_roles, user_id, can_admin, false)
+
+    let ts = now()
+    let revocation = RoleAssignment {
+        user_id: user_id,
+        group_id: group_id,
+        role: MessengerRole::User,
+        granted_by: revoker_id,
+        granted_at: ts,
+        expires_at: 0,
+    }
+    emit(rbac_audit_events, revocation)
+    true
+}
+
+// ── Standalone monitors ─────────────────────────────────────────
+
+monitor "rbac_operations" {
+    assert metric("role_assignments") + metric("permission_checks") > 0
+    window 60s
+    severity warning
+}
+
+monitor "privilege_escalation_watch" {
+    assert metric("admin_grants") < 20
+    window 3600s
+    severity critical
+}
+
+// ── Golden tests ────────────────────────────────────────────────
+
+test golden "register_user_default_permissions" {
+    circuit: register_user
+    input {
+        spark_id: test_key("alice_spark")
+        display_name: bytes("Alice")
+        signing_pk: test_key("alice_mldsa_pk")
+        encryption_pk: test_key("alice_mlkem_pk")
+    }
+    assert {
+        result.user_id != empty_bytes(16)
+        result.role == MessengerRole::User
+        overlay_get(messenger_roles, result.user_id, can_send) == true
+        overlay_get(messenger_roles, result.user_id, can_moderate) == false
+        overlay_get(messenger_roles, result.user_id, can_admin) == false
+    }
+}
+
+test golden "assign_admin_role" {
+    circuit: assign_role
+    input {
+        granter_id: test_id("owner")
+        user_id: test_id("alice")
+        group_id: test_id("group_1")
+        role: MessengerRole::GroupAdmin
+    }
+    setup {
+        mock graph_edge_lookup(messenger_roles, test_id("owner"), test_id("group_1"), admin_of) -> AdminOfEdge {
+            granted_at: 1000000,
+            granted_by: test_id("system"),
+        }
+    }
+    assert {
+        result != null
+        result.role == MessengerRole::GroupAdmin
+        result.granted_by == input.granter_id
+        overlay_get(messenger_roles, input.user_id, can_admin) == true
+        overlay_get(messenger_roles, input.user_id, can_moderate) == true
+    }
+}
+
+test golden "check_permission_observer_cannot_send" {
+    circuit: check_permission
+    input {
+        user_id: test_id("observer_1")
+        group_id: test_id("group_1")
+        permission: Permission::CanSend
+    }
+    setup {
+        mock graph_edge_lookup(messenger_roles, test_id("observer_1"), test_id("group_1"), member_of) -> MemberOfEdge {
+            role: MessengerRole::Observer,
+            joined_at: 1000000,
+        }
+        mock overlay_get(messenger_roles, test_id("observer_1"), can_send) -> false
+    }
+    assert {
+        result.allowed == false
+        result.permission == Permission::CanSend
+    }
+}
+
+test golden "revoke_prevents_last_admin_removal" {
+    circuit: revoke_role
+    input {
+        revoker_id: test_id("admin_1")
+        user_id: test_id("admin_1")
+        group_id: test_id("group_1")
+    }
+    setup {
+        mock graph_edge_lookup(messenger_roles, test_id("admin_1"), test_id("group_1"), admin_of) -> AdminOfEdge {
+            granted_at: 1000000,
+            granted_by: test_id("system"),
+        }
+        mock graph_edge_count_typed(messenger_roles, test_id("group_1"), admin_of) -> 1
+    }
+    assert {
+        result == false
+    }
+}
+
+// ── KAT vectors ─────────────────────────────────────────────────
+
+kat_vector "sha3_256_empty" {
+    function: "sha3_256"
+    input: bytes("")
+    expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+}
+
+kat_vector "blake3_empty" {
+    function: "blake3"
+    input: bytes("")
+    expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
+}

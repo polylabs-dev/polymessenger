@@ -1,4 +1,4 @@
-/// Poly Messenger Relay Graph — graph relay_mesh
+/// Poly Messenger Relay Graph — graph relay_mesh (v0.11.0)
 /// Stratum graph storage + Cortex AI governance
 /// govern lex esn/global/org/polylabs/messenger/relay
 ///
@@ -12,7 +12,7 @@ import polykit_metering from "../../../polykit/circuits/fl/polykit_metering.fl"
 
 // ── Data: Node types (data + store graph + cortex) ──────────────
 
-data RelayNode : app v1 {
+data RelayNode : messenger v1 {
     relay_id: bytes(16),
     endpoint_address: bytes(256),
     region: bytes(8),
@@ -75,8 +75,15 @@ series relay_series: relay_mesh
     lattice_imprint true
     witness_attest true
 
+// ── Streams ─────────────────────────────────────────────────────
+
+stream messenger_events: event<RelayNode>
+    retention 90d
+    consumers [streamsight, audit_trail]
+
 // ── Circuits: Relay registration ────────────────────────────────
 
+@guard(block_on: invalid_signature, duplicate_relay)
 circuit register_relay(
     endpoint_address: bytes(256),
     region: bytes(8),
@@ -88,14 +95,19 @@ circuit register_relay(
 ) -> RelayNode
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles, memory_bytes]
     observe metrics: [relays_registered, relay_mesh_size, jurisdiction_distribution]
     monitor "mesh_diversity" { unique_jurisdictions >= 5 }
     invariant "signature_valid" { registration verified by signing_pk }
     invariant "endpoint_reachable" { endpoint_address responds to probe }
+    property safety "relay_authenticity" { only ML-DSA-87 verified relays admitted }
+    property liveness "relay_mesh_available" { relay_mesh_size > 0 }
+    cortex policy: "relay_registration_policy"
+    cortex on_anomaly: alert "messenger-ops"
+    cortex on_block: quarantine "unverified_relay"
     wasm_abi [eslite_insert, stream_emit, now]
 {
     let relay_id = bit_slice(sha3_256(signing_pk), 0, 128)
@@ -123,11 +135,13 @@ circuit register_relay(
     overlay_set(relay_mesh, relay_id, capacity_remaining, capacity)
     overlay_set(relay_mesh, relay_id, cover_traffic_rate, 0)
     overlay_set(relay_mesh, relay_id, load_pct, 0)
+    emit(messenger_events, node)
     node
 }
 
 // ── Circuits: Route selection ───────────────────────────────────
 
+@guard(block_on: insufficient_candidates, latency_exceeded)
 circuit select_route(
     source_region: bytes(8),
     dest_region: bytes(8),
@@ -137,8 +151,8 @@ circuit select_route(
 ) -> [RelayNode; 5]
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles]
     observe metrics: [route_selections, candidates_scored, jurisdiction_spread, selection_latency_us]
@@ -146,6 +160,8 @@ circuit select_route(
     invariant "jurisdiction_diversity" { no_two_consecutive_same_jurisdiction }
     invariant "min_hops_met" { selected_count >= min_hops }
     invariant "latency_bound" { total_latency <= max_latency_ms }
+    property safety "route_privacy" { complete route not visible to any single node }
+    cortex on_anomaly: alert "messenger-ops"
     wasm_abi [eslite_query]
 {
     let hop_count = if security_tier >= 3 { 5 } else if security_tier >= 2 { 4 } else { min_hops }
@@ -194,13 +210,15 @@ circuit update_relay_health(
 ) -> bool
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles]
     observe metrics: [health_updates, unhealthy_relays, overlay_writes]
     monitor "relay_health" { load_pct < 95 }
     invariant "relay_exists" { graph_lookup(relay_id) != null }
+    property safety "stale_relay_detection" { stale relays marked unhealthy within 300s }
+    cortex on_anomaly: alert "messenger-ops"
     wasm_abi [eslite_query, eslite_insert, now]
 {
     let node = graph_lookup(relay_mesh, relay_id)
@@ -247,14 +265,16 @@ circuit rotate_route(
 ) -> [RelayNode; 5]
     profile poly_framework_standard
     lex esn/global/org/polylabs/messenger/relay
-    status production
     precision C
+    status production
     povc true
     meters [compute_cycles]
     observe metrics: [route_rotations, stale_relays_replaced, rotation_latency_us]
     monitor "rotation_frequency" { route_rotations > 0 }
     invariant "different_route" { new_route != current_route }
     invariant "jurisdiction_diversity" { no_two_consecutive_same_jurisdiction }
+    property safety "route_freshness" { stale routes replaced within TTL }
+    cortex on_anomaly: alert "messenger-ops"
     wasm_abi [eslite_query, eslite_insert, now]
 {
     let stale_count = 0
