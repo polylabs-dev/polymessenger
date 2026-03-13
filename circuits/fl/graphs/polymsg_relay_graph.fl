@@ -1,6 +1,6 @@
-/// Poly Messenger Relay Graph — graph relay_mesh (v0.11.0)
+/// Poly Messenger Relay Graph — graph relay_mesh (v0.12.0)
 /// Stratum graph storage + Cortex AI governance
-/// govern lex esn/global/org/polylabs/messenger/relay
+/// govern lex global/org/polylabs/messenger/relay
 ///
 /// The blind relay network modeled as a graph.
 /// Relay nodes and routes are typed with real-time overlays
@@ -24,7 +24,7 @@ data RelayNode : messenger v1 {
     last_heartbeat: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex global/org/polylabs/messenger/relay
     cortex {
         redact [endpoint_address]
         obfuscate [jurisdiction]
@@ -64,7 +64,7 @@ graph relay_mesh {
         anomaly_threshold 0.8
     }
 
-    observe relay_mesh: [latency_ns, load_pct, capacity_remaining] threshold: {
+    @observe relay_mesh: [latency_ns, load_pct, capacity_remaining] threshold: {
         anomaly_score 0.8
         baseline_window 30
     }
@@ -79,7 +79,7 @@ series relay_series: relay_mesh
 
 stream messenger_events: event<RelayNode>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 // ── Circuits: Relay registration ────────────────────────────────
 
@@ -94,12 +94,12 @@ circuit register_relay(
     registration_sig: bytes(4627),
 ) -> RelayNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger/relay
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles, memory_bytes]
-    observe metrics: [relays_registered, relay_mesh_size, jurisdiction_distribution]
+    @observe metrics: [relays_registered, relay_mesh_size, jurisdiction_distribution]
     monitor "mesh_diversity" { unique_jurisdictions >= 5 }
     invariant "signature_valid" { registration verified by signing_pk }
     invariant "endpoint_reachable" { endpoint_address responds to probe }
@@ -150,12 +150,12 @@ circuit select_route(
     security_tier: u8,
 ) -> [RelayNode; 5]
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger/relay
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [route_selections, candidates_scored, jurisdiction_spread, selection_latency_us]
+    @observe metrics: [route_selections, candidates_scored, jurisdiction_spread, selection_latency_us]
     monitor "route_quality" { selection_latency_us < 5000 }
     invariant "jurisdiction_diversity" { no_two_consecutive_same_jurisdiction }
     invariant "min_hops_met" { selected_count >= min_hops }
@@ -209,12 +209,12 @@ circuit update_relay_health(
     cover_rate: u32,
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger/relay
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [health_updates, unhealthy_relays, overlay_writes]
+    @observe metrics: [health_updates, unhealthy_relays, overlay_writes]
     monitor "relay_health" { load_pct < 95 }
     invariant "relay_exists" { graph_lookup(relay_id) != null }
     property safety "stale_relay_detection" { stale relays marked unhealthy within 300s }
@@ -264,12 +264,12 @@ circuit rotate_route(
     security_tier: u8,
 ) -> [RelayNode; 5]
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger/relay
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [route_rotations, stale_relays_replaced, rotation_latency_us]
+    @observe metrics: [route_rotations, stale_relays_replaced, rotation_latency_us]
     monitor "rotation_frequency" { route_rotations > 0 }
     invariant "different_route" { new_route != current_route }
     invariant "jurisdiction_diversity" { no_two_consecutive_same_jurisdiction }
@@ -379,13 +379,13 @@ test golden "update_relay_health_marks_stale" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
+golden_test "sha3_256_empty" {
     function: "sha3_256"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "mldsa_87_verify_nist" {
+golden_test "mldsa_87_verify_nist" {
     function: "mldsa_verify"
     message: hex("d81c4d8d734fcbfbeade3d3f8a039faa2a2c9957e835ad55b22e75bf57bb556ac8")
     signature: test_vector("mldsa87_sig_kat_1")

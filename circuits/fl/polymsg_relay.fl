@@ -1,4 +1,4 @@
-// Poly Messenger Relay — Blind relay routing with cover traffic (v0.11.0)
+// Poly Messenger Relay — Blind relay routing with cover traffic (v0.12.0)
 //
 // Lex Architecture:
 //   esn/global/org/polylabs/messenger/relay
@@ -19,7 +19,7 @@ import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
 type RelayId = bytes(16)
 type HopCount = u8
 
-// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+// ── Data Declarations (v0.12.0 Stratum + Cortex) ────────────────
 
 data RelayPacket : messenger v1 {
     onion_layers: bytes(4096),
@@ -29,7 +29,7 @@ data RelayPacket : messenger v1 {
     timestamp_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex global/org/polylabs/messenger/relay
     cortex {
         redact [onion_layers, packet_id]
         infer on_write
@@ -45,7 +45,7 @@ data RelayRoute : messenger v1 {
     expires_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex global/org/polylabs/messenger/relay
     cortex {
         redact [hops, hop_pubkeys]
         infer on_write
@@ -59,7 +59,7 @@ data CoverTrafficConfig : messenger v1 {
     mimicry_profile: u8,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex global/org/polylabs/messenger/relay
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -72,7 +72,7 @@ data RouteResult : messenger v1 {
     latency_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex global/org/polylabs/messenger/relay
     cortex {
         redact [route_id]
         infer on_write
@@ -86,7 +86,7 @@ stream relay_events: event<RelayPacket>
 
 stream messenger_events: event<RelayPacket>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 // ── Circuits ────────────────────────────────────────────────────
 
@@ -98,12 +98,12 @@ circuit route_message(
     sender_id: bytes(16),
 ) -> RouteResult
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
+    lex global/org/polylabs/messenger/relay
+    @precision C
     blind relay
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
-    observe metrics: [messages_routed, relay_latency_ms, onion_layers_applied, route_failures]
+    @observe metrics: [messages_routed, relay_latency_ms, onion_layers_applied, route_failures]
     monitor "relay_latency" { relay_latency_ms < 500 }
     invariant "constant_packet_size" { len(packet) == 4096 }
     invariant "sender_hidden" { sender_id not in packet }
@@ -156,11 +156,11 @@ circuit select_relays(
     security_tier: u8,
 ) -> RelayRoute
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
+    lex global/org/polylabs/messenger/relay
+    @precision C
     blind relay
     meters [compute_cycles]
-    observe metrics: [route_selections, relay_candidates_evaluated, jurisdiction_diversifications]
+    @observe metrics: [route_selections, relay_candidates_evaluated, jurisdiction_diversifications]
     monitor "route_diversity" { unique_jurisdictions >= min_hops }
     invariant "min_hop_count" { total_hops >= min_hops }
     invariant "jurisdiction_diversity" { no_two_consecutive_hops_same_jurisdiction }
@@ -197,12 +197,12 @@ circuit select_relays(
 @guard(block_on: config_invalid)
 circuit generate_cover_traffic(config: CoverTrafficConfig, session_id: bytes(32)) -> RelayPacket
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
+    lex global/org/polylabs/messenger/relay
+    @precision C
     blind full
     constant_time true
     meters [bandwidth_bytes]
-    observe metrics: [cover_packets_generated, cover_ratio, cover_jitter_ms]
+    @observe metrics: [cover_packets_generated, cover_ratio, cover_jitter_ms]
     monitor "cover_ratio" { cover_ratio >= 0.3 }
     invariant "constant_packet_size" { len(packet) == 4096 }
     invariant "indistinguishable" { cover_packet == real_packet in timing and size }
@@ -234,12 +234,12 @@ circuit strip_relay_layer(
     relay_id: RelayId,
 ) -> (RelayPacket, RelayId)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
-    precision C
+    lex global/org/polylabs/messenger/relay
+    @precision C
     blind relay
     constant_time true
     meters [compute_cycles, crypto_ops]
-    observe metrics: [layers_stripped, strip_latency_us, invalid_layers]
+    @observe metrics: [layers_stripped, strip_latency_us, invalid_layers]
     monitor "strip_latency" { strip_latency_us < 200 }
     invariant "constant_packet_size" { len(output_packet) == 4096 }
     invariant "no_sender_leak" { relay learns only next_hop }
@@ -331,19 +331,19 @@ test golden "strip_layer_preserves_size" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
+golden_test "sha3_256_empty" {
     function: "sha3_256"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "blake3_empty" {
+golden_test "blake3_empty" {
     function: "blake3"
     input: bytes("")
     expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
 }
 
-kat_vector "aes_gcm_256_nist_empty" {
+golden_test "aes_gcm_256_nist_empty" {
     function: "aes_gcm_encrypt"
     key: hex("0000000000000000000000000000000000000000000000000000000000000000")
     nonce: hex("000000000000000000000000")

@@ -1,4 +1,4 @@
-// Poly Messenger Ratchet — PQ Double Ratchet for forward secrecy (v0.11.0)
+// Poly Messenger Ratchet — PQ Double Ratchet for forward secrecy (v0.12.0)
 //
 // Lex Architecture:
 //   esn/global/org/polylabs/messenger/ratchet
@@ -20,7 +20,7 @@ import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
 type ChainKey = bytes(32)
 type MessageKey = bytes(32)
 
-// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+// ── Data Declarations (v0.12.0 Stratum + Cortex) ────────────────
 
 data RatchetState : messenger v1 {
     root_key: bytes(32),
@@ -35,7 +35,7 @@ data RatchetState : messenger v1 {
     skipped_keys: bytes(4096),
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/ratchet
+    govern lex global/org/polylabs/messenger/ratchet
     cortex {
         redact [root_key, send_chain_key, recv_chain_key, our_ratchet_keypair_sk, skipped_keys]
         infer on_write
@@ -48,7 +48,7 @@ data RatchetHeader : messenger v1 {
     message_index: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/ratchet
+    govern lex global/org/polylabs/messenger/ratchet
     cortex {
         redact [ratchet_pubkey]
         infer on_write
@@ -62,7 +62,7 @@ data RatchetEncryptResult : messenger v1 {
     tag: bytes(16),
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/ratchet
+    govern lex global/org/polylabs/messenger/ratchet
     cortex {
         redact [ciphertext, nonce, tag]
         infer on_write
@@ -75,7 +75,7 @@ data RatchetDecryptResult : messenger v1 {
     verified: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/ratchet
+    govern lex global/org/polylabs/messenger/ratchet
     cortex {
         redact [plaintext]
         infer on_write
@@ -88,7 +88,7 @@ data SkippedKeyEntry : messenger v1 {
     message_key: MessageKey,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/ratchet
+    govern lex global/org/polylabs/messenger/ratchet
     cortex {
         redact [message_key, ratchet_pubkey_hash]
         infer on_write
@@ -102,7 +102,7 @@ stream ratchet_events: event<RatchetHeader>
 
 stream messenger_events: event<RatchetHeader>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 // ── Circuits ────────────────────────────────────────────────────
 
@@ -115,11 +115,11 @@ circuit init_ratchet(
     is_initiator: bool,
 ) -> RatchetState
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/ratchet
-    precision C
+    lex global/org/polylabs/messenger/ratchet
+    @precision C
     constant_time true
     meters [compute_cycles, crypto_ops]
-    observe metrics: [ratchets_initialized, init_latency_us]
+    @observe metrics: [ratchets_initialized, init_latency_us]
     monitor "ratchet_init_latency" { init_latency_us < 200 }
     invariant "root_key_entropy" { len(root_key) == 32 }
     invariant "asymmetric_chains" { send_chain_key != recv_chain_key }
@@ -162,11 +162,11 @@ circuit init_ratchet(
 /// Advance the send chain and encrypt
 circuit ratchet_encrypt(state: RatchetState, plaintext: bytes) -> (RatchetEncryptResult, RatchetState)
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/ratchet
-    precision C
+    lex global/org/polylabs/messenger/ratchet
+    @precision C
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
-    observe metrics: [ratchet_encryptions, chain_advances, encrypt_latency_us]
+    @observe metrics: [ratchet_encryptions, chain_advances, encrypt_latency_us]
     monitor "ratchet_encrypt_latency" { encrypt_latency_us < 300 }
     invariant "forward_secrecy" { old_keys_erased }
     invariant "chain_monotonic" { chain_index strictly increases }
@@ -219,11 +219,11 @@ circuit ratchet_decrypt(
     tag: bytes(16),
 ) -> RatchetDecryptResult
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/ratchet
-    precision C
+    lex global/org/polylabs/messenger/ratchet
+    @precision C
     constant_time true
     meters [compute_cycles, crypto_ops]
-    observe metrics: [ratchet_decryptions, dh_ratchet_steps, skipped_key_lookups, decrypt_failures]
+    @observe metrics: [ratchet_decryptions, dh_ratchet_steps, skipped_key_lookups, decrypt_failures]
     monitor "decrypt_failure_rate" { decrypt_failures / ratchet_decryptions < 0.01 }
     invariant "forward_secrecy" { old_keys_erased }
     invariant "chain_monotonic" { chain_index strictly increases }
@@ -290,10 +290,10 @@ circuit ratchet_decrypt(
 /// Derive message key and next chain key from current chain
 circuit advance_chain(chain_key: ChainKey, index: u64) -> (MessageKey, ChainKey)
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/ratchet
-    precision C
+    lex global/org/polylabs/messenger/ratchet
+    @precision C
     constant_time true
-    observe metrics: [chain_advances]
+    @observe metrics: [chain_advances]
     invariant "chain_monotonic" { chain_index strictly increases }
     invariant "key_independence" { message_key != next_chain_key }
     property safety "key_derivation_deterministic" { same inputs always produce same keys }
@@ -308,11 +308,11 @@ circuit advance_chain(chain_key: ChainKey, index: u64) -> (MessageKey, ChainKey)
 /// Cache skipped message keys for out-of-order delivery
 circuit skip_message_keys(state: RatchetState, current: u64, target: u64) -> RatchetState
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/ratchet
-    precision C
+    lex global/org/polylabs/messenger/ratchet
+    @precision C
     constant_time true
     meters [compute_cycles, memory_bytes]
-    observe metrics: [keys_skipped, skip_cache_size]
+    @observe metrics: [keys_skipped, skip_cache_size]
     monitor "skip_limit" { keys_skipped < 256 }
     invariant "bounded_skip" { target - current <= 256 }
     property safety "skipped_keys_bounded" { skip count never exceeds 256 }
@@ -398,19 +398,19 @@ test golden "chain_advance_produces_independent_keys" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
+golden_test "sha3_256_empty" {
     function: "sha3_256"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "sha3_256_abc" {
+golden_test "sha3_256_abc" {
     function: "sha3_256"
     input: bytes("abc")
     expected: hex("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
 }
 
-kat_vector "hkdf_sha3_256_ratchet_derivation" {
+golden_test "hkdf_sha3_256_ratchet_derivation" {
     function: "hkdf_sha3"
     ikm: hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
     salt: hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
@@ -420,7 +420,7 @@ kat_vector "hkdf_sha3_256_ratchet_derivation" {
     expected: hex("832390086cda71fb47625bb5ceb168e4c8e26a1a16ed34d9fc7fe92c1481579338da362cb8d9f925d7cb407090bf3df3bdb6bf0adbe7d9b06fee36ec2a58e18f7")
 }
 
-kat_vector "aes_gcm_256_nist_empty" {
+golden_test "aes_gcm_256_nist_empty" {
     function: "aes_gcm_encrypt"
     key: hex("0000000000000000000000000000000000000000000000000000000000000000")
     nonce: hex("000000000000000000000000")

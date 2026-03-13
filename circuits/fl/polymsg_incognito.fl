@@ -1,4 +1,4 @@
-/// Poly Messenger Incognito — Incognito mode activation and cover traffic (v0.11.0)
+/// Poly Messenger Incognito — Incognito mode activation and cover traffic (v0.12.0)
 /// Stratum: kv store + lex governance under esn/global/org/polylabs/messenger/incognito
 /// Cortex: redaction, write-time inference, anomaly alerting
 ///
@@ -7,11 +7,11 @@
 /// Traffic mimicry integration ensures cover traffic is statistically
 /// indistinguishable from real messaging patterns.
 ///
-/// govern lex esn/global/org/polylabs/messenger/incognito
+/// govern lex global/org/polylabs/messenger/incognito
 
 import polykit_blind_relay from "../../polykit/circuits/fl/apps/polykit_blind_relay.fl"
 
-// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+// ── Data Declarations (v0.12.0 Stratum + Cortex) ────────────────
 
 data IncognitoConfig : messenger v1 {
     session_id: bytes(32),
@@ -24,7 +24,7 @@ data IncognitoConfig : messenger v1 {
     enabled: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/incognito
+    govern lex global/org/polylabs/messenger/incognito
     cortex {
         redact [session_id]
         infer on_write
@@ -44,7 +44,7 @@ data IncognitoSession : messenger v1 {
     metadata_leak_detected: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/incognito
+    govern lex global/org/polylabs/messenger/incognito
     cortex {
         redact [session_id, user_id]
         infer on_write
@@ -59,7 +59,7 @@ data CoverPacket : messenger v1 {
     jitter_applied_ms: u32,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/incognito
+    govern lex global/org/polylabs/messenger/incognito
     cortex {
         redact [packet_id, session_id, payload]
         infer on_write
@@ -70,11 +70,11 @@ data CoverPacket : messenger v1 {
 
 stream incognito_events: event<IncognitoSession>
     retention 30d
-    consumers [streamsight]
+    consumers [observe]
 
 stream messenger_events: event<IncognitoSession>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 // ── Circuits ────────────────────────────────────────────────────
 
@@ -85,11 +85,11 @@ circuit activate_incognito(
     config: IncognitoConfig,
 ) -> IncognitoSession
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/incognito
-    precision C
+    lex global/org/polylabs/messenger/incognito
+    @precision C
     constant_time true
     meters [compute_cycles, memory_bytes]
-    observe metrics: [incognito_activations, active_incognito_sessions, activation_latency_us]
+    @observe metrics: [incognito_activations, active_incognito_sessions, activation_latency_us]
     monitor "incognito_activation" { activation_latency_us < 500 }
     invariant "config_valid" { config.cover_rate_per_second > 0 and config.padding_size >= 4096 }
     invariant "session_unique" { session_id not already active }
@@ -129,12 +129,12 @@ circuit generate_cover_traffic(
     config: IncognitoConfig,
 ) -> CoverPacket
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/incognito
-    precision C
+    lex global/org/polylabs/messenger/incognito
+    @precision C
     blind full
     constant_time true
     meters [compute_cycles, bandwidth_bytes]
-    observe metrics: [cover_packets_generated, cover_ratio, cover_jitter_applied_ms, cover_bandwidth_bytes]
+    @observe metrics: [cover_packets_generated, cover_ratio, cover_jitter_applied_ms, cover_bandwidth_bytes]
     monitor "cover_ratio" { cover_ratio >= 0.3 }
     invariant "constant_packet_size" { len(payload) == 4096 }
     invariant "timing_indistinguishable" { jitter within config.jitter_range_ms }
@@ -171,11 +171,11 @@ circuit generate_cover_traffic(
 /// Deactivate an incognito session
 circuit deactivate_incognito(session_id: bytes(32), user_id: bytes(16)) -> IncognitoSession
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/incognito
-    precision C
+    lex global/org/polylabs/messenger/incognito
+    @precision C
     constant_time true
     meters [compute_cycles]
-    observe metrics: [incognito_deactivations, session_duration_ms]
+    @observe metrics: [incognito_deactivations, session_duration_ms]
     invariant "session_exists" { load(session_id) != null }
     invariant "user_authorized" { session.user_id == user_id }
     property safety "clean_deactivation" { all cover traffic ceases after deactivation }
@@ -210,11 +210,11 @@ circuit deactivate_incognito(session_id: bytes(32), user_id: bytes(16)) -> Incog
 /// Check for metadata leaks in an active incognito session
 circuit check_metadata_leak(session: IncognitoSession) -> bool
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/incognito
-    precision C
+    lex global/org/polylabs/messenger/incognito
+    @precision C
     constant_time true
     meters [compute_cycles]
-    observe metrics: [leak_checks, leaks_detected, false_positive_leaks]
+    @observe metrics: [leak_checks, leaks_detected, false_positive_leaks]
     monitor "leak_detection" { leaks_detected == 0 implies healthy }
     invariant "session_active" { session.active == true }
     property safety "no_metadata_leak" { timing and size analysis reveals no user identity }
@@ -353,13 +353,13 @@ test golden "deactivate_incognito_session" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
+golden_test "sha3_256_empty" {
     function: "sha3_256"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "blake3_empty" {
+golden_test "blake3_empty" {
     function: "blake3"
     input: bytes("")
     expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")

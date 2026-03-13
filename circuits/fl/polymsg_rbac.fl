@@ -1,6 +1,6 @@
-/// Poly Messenger RBAC — Role-Based Access Control graph (v0.11.0)
+/// Poly Messenger RBAC — Role-Based Access Control graph (v0.12.0)
 /// Stratum graph storage + Cortex AI governance + ML-DSA-87 signing
-/// govern lex esn/global/org/polylabs/messenger/rbac
+/// govern lex global/org/polylabs/messenger/rbac
 ///
 /// Roles: User, GroupAdmin, Moderator, Observer
 /// Permissions: can_send, can_moderate, can_admin
@@ -25,7 +25,7 @@ type Permission = enum {
     CanAdmin,
 }
 
-// ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
+// ── Data Declarations (v0.12.0 Stratum + Cortex) ────────────────
 
 data UserInfo : messenger v1 {
     user_id: bytes(16),
@@ -38,7 +38,7 @@ data UserInfo : messenger v1 {
     last_active: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex global/org/polylabs/messenger/rbac
     cortex {
         redact [spark_id]
         obfuscate [display_name]
@@ -55,7 +55,7 @@ data GroupInfo : messenger v1 {
     created_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex global/org/polylabs/messenger/rbac
     cortex {
         obfuscate [owner_id]
         infer on_write
@@ -71,7 +71,7 @@ data RoleAssignment : messenger v1 {
     expires_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex global/org/polylabs/messenger/rbac
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -85,7 +85,7 @@ data PermissionCheck : messenger v1 {
     checked_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex global/org/polylabs/messenger/rbac
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -130,7 +130,7 @@ graph messenger_roles {
         anomaly_threshold 0.75
     }
 
-    observe messenger_roles: [permissions, role_distribution] threshold: {
+    @observe messenger_roles: [permissions, role_distribution] threshold: {
         anomaly_score 0.75
         baseline_window 60
     }
@@ -145,11 +145,11 @@ series rbac_series: messenger_roles
 
 stream messenger_events: event<RoleAssignment>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 stream rbac_audit_events: event<RoleAssignment>
     retention forever
-    consumers [streamsight, governance, alerting]
+    consumers [observe, governance, alerting]
 
 // ── Circuits ────────────────────────────────────────────────────
 
@@ -161,10 +161,10 @@ circuit register_user(
     encryption_pk: bytes(1568),
 ) -> UserInfo
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
-    precision C
+    lex global/org/polylabs/messenger/rbac
+    @precision C
     meters [compute_cycles, memory_bytes]
-    observe metrics: [users_registered, rbac_graph_size]
+    @observe metrics: [users_registered, rbac_graph_size]
     monitor "registration_rate" { users_registered > 0 }
     invariant "unique_user" { user_id not already in graph }
     invariant "valid_pk" { len(signing_pk) == 2592 }
@@ -200,10 +200,10 @@ circuit assign_role(
     role: MessengerRole,
 ) -> RoleAssignment
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
-    precision C
+    lex global/org/polylabs/messenger/rbac
+    @precision C
     meters [compute_cycles]
-    observe metrics: [role_assignments, admin_grants, moderator_grants, role_changes]
+    @observe metrics: [role_assignments, admin_grants, moderator_grants, role_changes]
     monitor "admin_grant_rate" { admin_grants < 10/hr }
     invariant "granter_is_admin" { granter has admin_of edge to group }
     invariant "no_self_escalation" { granter_id != user_id for admin grants }
@@ -268,10 +268,10 @@ circuit check_permission(
     permission: Permission,
 ) -> PermissionCheck
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
-    precision C
+    lex global/org/polylabs/messenger/rbac
+    @precision C
     meters [compute_cycles]
-    observe metrics: [permission_checks, permission_denied, permission_granted]
+    @observe metrics: [permission_checks, permission_denied, permission_granted]
     monitor "denial_rate" { permission_denied / permission_checks < 0.30 }
     invariant "user_in_group" { member_of edge exists }
     property safety "permission_consistency" { permission check is deterministic for same state }
@@ -312,10 +312,10 @@ circuit revoke_role(
     group_id: bytes(16),
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
-    precision C
+    lex global/org/polylabs/messenger/rbac
+    @precision C
     meters [compute_cycles]
-    observe metrics: [role_revocations, admin_revocations]
+    @observe metrics: [role_revocations, admin_revocations]
     invariant "revoker_is_admin" { revoker has admin_of edge to group }
     invariant "not_last_admin" { at least one admin remains after revocation }
     property safety "admin_continuity" { group always retains at least one admin }
@@ -445,13 +445,13 @@ test golden "revoke_prevents_last_admin_removal" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
+golden_test "sha3_256_empty" {
     function: "sha3_256"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "blake3_empty" {
+golden_test "blake3_empty" {
     function: "blake3"
     input: bytes("")
     expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")

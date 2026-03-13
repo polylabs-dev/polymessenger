@@ -1,6 +1,6 @@
-/// Poly Messenger Conversation DAG — dag message_thread (v0.11.0)
+/// Poly Messenger Conversation DAG — dag message_thread (v0.12.0)
 /// Stratum merkle-CSR storage + Cortex AI governance + ML-DSA-87 signing
-/// govern lex esn/global/org/polylabs/messenger
+/// govern lex global/org/polylabs/messenger
 ///
 /// Messages form a DAG within each conversation.
 /// Replies create parent edges. Reactions are typed edges.
@@ -23,7 +23,7 @@ data MessageNode : messenger v1 {
     classification: u8,
 }
     store dag
-    govern lex esn/global/org/polylabs/messenger
+    govern lex global/org/polylabs/messenger
     cortex {
         redact [content_hash, content_preview]
         infer on_write
@@ -43,7 +43,7 @@ type ReactionEdge = struct {
     reacted_at: u64,
 }
 
-// ── State machine (enhanced v0.11.0) ────────────────────────────
+// ── State machine (enhanced v0.12.0) ────────────────────────────
 
 state_machine message_lifecycle {
     initial SENDING
@@ -83,7 +83,7 @@ dag message_thread {
         cold @nvme,
     }
 
-    attest povc {
+    attest attested {
         witness threshold(2, 3)
     }
 
@@ -93,7 +93,7 @@ dag message_thread {
         anomaly_threshold 0.8
     }
 
-    observe message_thread: [delivery_status, expiration_ns, classification_level] threshold: {
+    @observe message_thread: [delivery_status, expiration_ns, classification_level] threshold: {
         anomaly_score 0.8
         baseline_window 60
     }
@@ -108,7 +108,7 @@ series message_series: message_thread
 
 stream messenger_events: event<MessageNode>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 // ── Circuits: Message operations ────────────────────────────────
 
@@ -120,12 +120,12 @@ circuit send_message(
     reply_to: bytes(16),
 ) -> MessageNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles, memory_bytes, bandwidth_bytes]
-    observe metrics: [messages_sent, message_dag_size, reply_depth, send_latency_us]
+    @observe metrics: [messages_sent, message_dag_size, reply_depth, send_latency_us]
     monitor "send_latency" { send_latency_us < 1000 }
     invariant "dag_acyclic" { no_cycles_after_insert }
     invariant "sender_authenticated" { sender_id verified }
@@ -171,12 +171,12 @@ circuit receive_message(
     sealed_envelope_hash: bytes(32),
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles, bandwidth_bytes]
-    observe metrics: [messages_received, receive_latency_us, duplicate_receives]
+    @observe metrics: [messages_received, receive_latency_us, duplicate_receives]
     monitor "receive_latency" { receive_latency_us < 500 }
     invariant "hash_matches" { stored_hash == sealed_envelope_hash }
     property safety "envelope_integrity" { sealed_envelope_hash verified before delivery }
@@ -197,12 +197,12 @@ circuit receive_message(
 
 circuit mark_read(message_id: bytes(16), reader_id: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [messages_read, read_latency_ms]
+    @observe metrics: [messages_read, read_latency_ms]
     invariant "delivered_before_read" { status >= DELIVERED }
     property safety "read_receipt_authentic" { reader_id must be conversation participant }
     wasm_abi [eslite_query, eslite_insert, now]
@@ -228,12 +228,12 @@ circuit add_reaction(
     emoji_code: u32,
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [reactions_added, reaction_types]
+    @observe metrics: [reactions_added, reaction_types]
     invariant "message_exists" { dag_lookup(message_id) != null }
     invariant "no_duplicate_reaction" { no_same_reactor_same_emoji }
     property safety "reaction_idempotent" { duplicate reactions are no-ops }
@@ -256,12 +256,12 @@ circuit add_reaction(
 
 circuit delete_message(message_id: bytes(16), requester_id: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [messages_deleted]
+    @observe metrics: [messages_deleted]
     invariant "only_sender_deletes" { requester_id == sender_id }
     invariant "terminal_state" { status becomes DELETED }
     property safety "delete_authorized" { only message sender can delete }
@@ -282,12 +282,12 @@ circuit delete_message(message_id: bytes(16), requester_id: bytes(16)) -> bool
 
 circuit expire_messages(conversation_id: bytes(16), current_time: u64) -> u64
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles, memory_bytes]
-    observe metrics: [messages_expired, expiration_scans, expiration_latency_ms]
+    @observe metrics: [messages_expired, expiration_scans, expiration_latency_ms]
     monitor "expiration_scan_time" { expiration_latency_ms < 5000 }
     invariant "only_expirable" { has_expiration guard satisfied }
     property safety "expiration_enforced" { expired messages are tombstoned }
@@ -375,13 +375,13 @@ test golden "mark_read_updates_status" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "blake3_empty" {
+golden_test "blake3_empty" {
     function: "blake3"
     input: bytes("")
     expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
 }
 
-kat_vector "sha3_256_empty" {
+golden_test "sha3_256_empty" {
     function: "sha3_256"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")

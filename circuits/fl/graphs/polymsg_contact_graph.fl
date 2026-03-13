@@ -1,6 +1,6 @@
-/// Poly Messenger Contact Graph — graph contact_network (v0.11.0)
+/// Poly Messenger Contact Graph — graph contact_network (v0.12.0)
 /// Stratum graph storage + Cortex AI governance
-/// govern lex esn/global/org/polylabs/messenger
+/// govern lex global/org/polylabs/messenger
 ///
 /// Contacts, groups, trust relationships, and blocking form a graph.
 /// Replaces flat contact lists with a relational model supporting
@@ -23,7 +23,7 @@ data ContactNode : messenger v1 {
     verified_at: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger
+    govern lex global/org/polylabs/messenger
     cortex {
         redact [phone_number, email]
         obfuscate [display_name, user_id]
@@ -39,7 +39,7 @@ data GroupNode : messenger v1 {
     created_at: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger
+    govern lex global/org/polylabs/messenger
     cortex {
         obfuscate [creator_id]
         infer on_write
@@ -90,7 +90,7 @@ graph contact_network {
         anomaly_threshold 0.85
     }
 
-    observe contact_network: [trust_level, message_count, online_status] threshold: {
+    @observe contact_network: [trust_level, message_count, online_status] threshold: {
         anomaly_score 0.85
         baseline_window 120
     }
@@ -105,7 +105,7 @@ series contact_series: contact_network
 
 stream messenger_events: event<ContactNode>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 // ── Circuits: Contact management ────────────────────────────────
 
@@ -116,12 +116,12 @@ circuit add_contact(
     display_name: bytes(128),
 ) -> ContactNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles, memory_bytes]
-    observe metrics: [contacts_added, contact_graph_size]
+    @observe metrics: [contacts_added, contact_graph_size]
     monitor "graph_growth" { contact_graph_size < 100000 }
     invariant "no_self_contact" { owner_id != contact_id }
     invariant "pubkey_valid" { len(contact_pk) == 2592 }
@@ -161,13 +161,13 @@ circuit verify_contact(
     verification_payload: bytes,
 ) -> bool
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     constant_time true
     meters [compute_cycles, crypto_ops]
-    observe metrics: [verifications, verification_successes, verification_failures]
+    @observe metrics: [verifications, verification_successes, verification_failures]
     monitor "verification_failure_rate" { verification_failures / verifications < 0.1 }
     invariant "mutual_verification" { both_parties_verify }
     property safety "verification_integrity" { only valid ML-DSA-87 signatures accepted }
@@ -203,12 +203,12 @@ circuit verify_contact(
 
 circuit block_contact(owner_id: bytes(16), contact_id: bytes(16), reason: u8) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [contacts_blocked, block_reasons]
+    @observe metrics: [contacts_blocked, block_reasons]
     invariant "block_is_immediate" { blocked_at == now() }
     property safety "block_enforced" { blocked contact cannot send messages to blocker }
     wasm_abi [eslite_insert, now]
@@ -230,12 +230,12 @@ circuit create_group(
     max_members: u32,
 ) -> GroupNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles, memory_bytes]
-    observe metrics: [groups_created, group_graph_size]
+    @observe metrics: [groups_created, group_graph_size]
     monitor "group_size_limit" { max_members <= 1024 }
     invariant "creator_is_admin" { creator_role == ADMIN }
     property safety "group_admin_required" { group always has at least one admin }
@@ -260,12 +260,12 @@ circuit create_group(
 
 circuit join_group(user_id: bytes(16), group_id: bytes(16), invited_by: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [group_joins, group_membership_size]
+    @observe metrics: [group_joins, group_membership_size]
     monitor "group_capacity" { group_membership_size < max_members }
     invariant "not_blocked" { user_not_blocked_from_group }
     invariant "inviter_is_member" { inviter_has_membership_edge }
@@ -287,12 +287,12 @@ circuit join_group(user_id: bytes(16), group_id: bytes(16), invited_by: bytes(16
 
 circuit leave_group(user_id: bytes(16), group_id: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
-    precision C
-    status production
-    povc true
+    lex global/org/polylabs/messenger
+    @precision C
+    @status production
+    @attested true
     meters [compute_cycles]
-    observe metrics: [group_leaves]
+    @observe metrics: [group_leaves]
     invariant "membership_removed" { no_edge_after_leave }
     property safety "cleanup_on_empty" { empty groups are removed from graph }
     wasm_abi [eslite_query, eslite_insert]
@@ -370,13 +370,13 @@ test golden "create_group_with_admin" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
+golden_test "sha3_256_empty" {
     function: "sha3_256"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "blake3_empty" {
+golden_test "blake3_empty" {
     function: "blake3"
     input: bytes("")
     expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")

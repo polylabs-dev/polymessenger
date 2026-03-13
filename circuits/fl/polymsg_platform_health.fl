@@ -1,4 +1,4 @@
-/// Poly Messenger Platform Health — Blind relay pattern health monitoring (v0.11.0)
+/// Poly Messenger Platform Health — Blind relay pattern health monitoring (v0.12.0)
 ///
 /// Aggregates messaging-relay metrics through blinded, cohort-enforced telemetry.
 /// Stratum: kv store + lex governance under esn/global/org/polylabs/messenger.
@@ -8,7 +8,7 @@
 /// No message content, sender/recipient pairs, or session keys ever reach StreamSight.
 /// All relays must execute in constant time to prevent timing side-channels.
 ///
-/// govern lex esn/global/org/polylabs/messenger
+/// govern lex global/org/polylabs/messenger
 
 import polykit_blind_telemetry from "../../polykit/circuits/fl/polykit_blind_telemetry.fl"
 import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
@@ -33,7 +33,7 @@ data PlatformMetrics : messenger v1 {
     collected_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger
+    govern lex global/org/polylabs/messenger
     cortex {
         obfuscate [blinded_user_id, anomaly_score, relay_latency_avg_ms]
         infer on_write
@@ -50,16 +50,16 @@ type HealthStatus = enum {
 
 stream messenger_health_events: event<PlatformMetrics>
     retention 365d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
     classify blinded_user_id: METADATA, cohort_size: METADATA
 
 stream messenger_anomaly_events: event<PlatformMetrics>
     retention forever
-    consumers [streamsight, governance, alerting]
+    consumers [observe, governance, alerting]
 
 stream messenger_events: event<PlatformMetrics>
     retention 90d
-    consumers [streamsight, audit_trail]
+    consumers [observe, audit_trail]
 
 // ── Series ──────────────────────────────────────────────────────────
 
@@ -82,15 +82,15 @@ circuit messenger_platform_health(
     relay_timing_variance_ns: u64,
 ) -> PlatformMetrics
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger {
+    lex global/org/polylabs/messenger {
         governance hierarchical
         audit_trail true
         sub_lex session fan_in
     }
-    precision C
-    streamsight true
-    povc true
-    observe metrics: [platform_queries, active_sessions, messages_relayed, relay_latency_avg_ms, cover_traffic_ratio, network_throughput]
+    @precision C
+    @observe true
+    @attested true
+    @observe metrics: [platform_queries, active_sessions, messages_relayed, relay_latency_avg_ms, cover_traffic_ratio, network_throughput]
     invariant "no_content_at_platform" { content_visible == false }
     invariant "blind_relay_enforced" { all_relays_constant_time == true }
     property safety "session_isolation" { no_cross_session_data }
@@ -98,7 +98,7 @@ circuit messenger_platform_health(
     monitor "relay_health" { avg_latency_ms < 500 }
     cortex policy: "platform_health_policy"
     cortex on_anomaly: alert "messenger-team"
-    esz_emit "verify/messenger_health.esz"
+    @serialize "verify/messenger_health.esz"
     li_feed full_escir true, optimized_ir true, optimization_metadata true
     fuzz_target
     test golden "healthy_platform" {
@@ -204,13 +204,13 @@ circuit messenger_anomaly_check(
     window_ms: u64,
 ) -> (HealthStatus, f64, string)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger {
+    lex global/org/polylabs/messenger {
         governance hierarchical
         audit_trail true
     }
-    precision C
-    streamsight true
-    observe metrics: [anomaly_checks, anomaly_detections]
+    @precision C
+    @observe true
+    @observe metrics: [anomaly_checks, anomaly_detections]
     monitor "anomaly_rate" { anomaly_detections < 50/hr }
     invariant "window_valid" { window_ms > 0 }
     property safety "anomaly_isolation" { anomaly data stays within messenger lex namespace }
