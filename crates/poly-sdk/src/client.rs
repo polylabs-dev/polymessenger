@@ -21,7 +21,7 @@ struct ClientIdentity {
 impl PolyMessengerClient {
     pub fn new(device_alias: &str) -> Self {
         let kp = mlkem_keygen();
-        let user_id_hash = poly_core::crypto::sha3_256(kp.public_key.as_slice());
+        let user_id_hash = poly_core::crypto::sha3_512_truncated_32(kp.public_key.as_slice());
         let mut user_id = [0u8; 16];
         user_id.copy_from_slice(&user_id_hash[..16]);
 

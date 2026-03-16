@@ -2,7 +2,7 @@ use zeroize::Zeroize;
 
 use crate::crypto::{
     aes_gcm_decrypt, aes_gcm_encrypt, blake3_hash, concat_bytes, hkdf_sha3, mlkem_decaps,
-    mlkem_encaps, sha3_256,
+    mlkem_encaps, sha3_512_truncated_32,
 };
 use crate::types::{DecryptedMessage, EncryptedMessage, SessionEstablishment, SessionRotation};
 use crate::{Error, Result};
@@ -23,7 +23,7 @@ pub fn establish_session(
     let mut session_key = [0u8; 32];
     session_key.copy_from_slice(&session_key_vec);
 
-    let session_id = sha3_256(&concat_bytes(&[&session_key, &session_context]));
+    let session_id = sha3_512_truncated_32(&concat_bytes(&[&session_key, &session_context]));
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -128,7 +128,7 @@ pub fn rotate_session_key(
     let mut new_key = [0u8; 32];
     new_key.copy_from_slice(&new_key_vec);
 
-    let old_key_hash = sha3_256(current_key);
+    let old_key_hash = sha3_512_truncated_32(current_key);
 
     SessionRotation {
         session_id: *session_id,
@@ -178,7 +178,7 @@ mod tests {
 
         let rotation = rotate_session_key(&key, &session_id, 1);
         assert_ne!(rotation.new_key, key);
-        assert_eq!(rotation.old_key_hash, sha3_256(&key));
+        assert_eq!(rotation.old_key_hash, sha3_512_truncated_32(&key));
         assert_eq!(rotation.rotation_index, 1);
     }
 }

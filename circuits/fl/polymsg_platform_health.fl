@@ -191,7 +191,7 @@ circuit messenger_platform_health(
     if cohort_ok {
         emit(messenger_health_events, metrics)
         emit(messenger_events, metrics)
-        eslite_insert("messenger_health", sha3_256(serialize(metrics)), metrics)
+        eslite_insert("messenger_health", sha3_512(serialize(metrics)), metrics)
     }
 
     metrics

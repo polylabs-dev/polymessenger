@@ -50,7 +50,7 @@ impl ContactNetwork {
 
     pub fn register_agent(&mut self, agent: AgentContact) {
         let mut id = [0u8; 16];
-        let hash = crate::crypto::sha3_256(agent.device_alias.as_bytes());
+        let hash = crate::crypto::sha3_512_truncated_32(agent.device_alias.as_bytes());
         id.copy_from_slice(&hash[..16]);
         self.graph.insert_node(id, ContactNodeType::Agent(agent));
     }
