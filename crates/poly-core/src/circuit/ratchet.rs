@@ -2,7 +2,7 @@ use zeroize::Zeroize;
 
 use crate::crypto::{
     aes_gcm_decrypt, aes_gcm_encrypt, blake3_hash, concat_bytes, hkdf_sha3, mlkem_decaps,
-    mlkem_encaps, mlkem_keygen, sha3_256,
+    mlkem_encaps, mlkem_keygen, sha3_512_truncated_32,
 };
 use crate::types::{
     ChainKey, MessageKey, RatchetDecryptResult, RatchetEncryptResult, RatchetHeader, RatchetState,
@@ -15,7 +15,7 @@ pub fn advance_chain(chain_key: &ChainKey, index: u64) -> (MessageKey, ChainKey)
     let idx_bytes = index.to_le_bytes();
     let msg_input = concat_bytes(&[chain_key, &[0x01], &idx_bytes]);
     let chain_input = concat_bytes(&[chain_key, &[0x02], &idx_bytes]);
-    (sha3_256(&msg_input), sha3_256(&chain_input))
+    (sha3_512_truncated_32(&msg_input), sha3_512_truncated_32(&chain_input))
 }
 
 /// FL circuit: init_ratchet
@@ -49,8 +49,8 @@ pub fn init_ratchet(
         (0x02u8, 0x01u8)
     };
 
-    let send_chain_key = sha3_256(&concat_bytes(&[chain_seed, &[send_label]]));
-    let recv_chain_key = sha3_256(&concat_bytes(&[chain_seed, &[recv_label]]));
+    let send_chain_key = sha3_512_truncated_32(&concat_bytes(&[chain_seed, &[send_label]]));
+    let recv_chain_key = sha3_512_truncated_32(&concat_bytes(&[chain_seed, &[recv_label]]));
 
     Ok(RatchetState {
         root_key,
@@ -129,8 +129,8 @@ pub fn ratchet_decrypt(
     nonce: &[u8; 12],
     tag: &[u8; 16],
 ) -> Result<RatchetDecryptResult> {
-    let their_pk_hash = sha3_256(&header.ratchet_pubkey);
-    let current_pk_hash = sha3_256(&state.their_ratchet_pubkey);
+    let their_pk_hash = sha3_512_truncated_32(&header.ratchet_pubkey);
+    let current_pk_hash = sha3_512_truncated_32(&state.their_ratchet_pubkey);
 
     let working_state = if their_pk_hash != current_pk_hash {
         let kem_result = mlkem_encaps(&header.ratchet_pubkey)?;
@@ -139,7 +139,7 @@ pub fn ratchet_decrypt(
         let root_material = hkdf_sha3(&state.root_key, &kem_secret, 64);
         let mut new_root = [0u8; 32];
         new_root.copy_from_slice(&root_material[..32]);
-        let new_recv_chain: [u8; 32] = sha3_256(&root_material[32..64]);
+        let new_recv_chain: [u8; 32] = sha3_512_truncated_32(&root_material[32..64]);
 
         let new_kp = mlkem_keygen();
         let kem_result2 = mlkem_encaps(&header.ratchet_pubkey)?;
@@ -148,7 +148,7 @@ pub fn ratchet_decrypt(
         let send_material = hkdf_sha3(&new_root, &kem_secret2, 64);
         let mut final_root = [0u8; 32];
         final_root.copy_from_slice(&send_material[..32]);
-        let new_send_chain: [u8; 32] = sha3_256(&send_material[32..64]);
+        let new_send_chain: [u8; 32] = sha3_512_truncated_32(&send_material[32..64]);
 
         RatchetState {
             root_key: final_root,

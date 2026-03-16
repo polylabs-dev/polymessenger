@@ -123,13 +123,13 @@ circuit route_message(
         let hop_pk = route.hop_pubkeys[i]
         let kem = mlkem_encaps(hop_pk)
         let layer_key = blake3(kem)
-        let layer_nonce = bit_slice(sha3_256(concat(layer_key, u64_to_bytes(i))), 0, 96)
+        let layer_nonce = bit_slice(sha3_512(concat(layer_key, u64_to_bytes(i))), 0, 96)
         let hop_header = concat(route.hops[i], u8_to_bytes(i))
         let (encrypted_layer, tag) = aes_gcm_encrypt(layer_key, layer_nonce, onion, hop_header)
         onion = pad_to_size(concat(kem, tag, encrypted_layer), 4096)
     }
 
-    let packet_id = sha3_256(concat(route.route_id, u64_to_bytes(ts)))
+    let packet_id = sha3_512(concat(route.route_id, u64_to_bytes(ts)))
     let packet = RelayPacket {
         onion_layers: onion,
         packet_id: packet_id,
@@ -180,7 +180,7 @@ circuit select_relays(
     }
 
     let route_seed = blake3(concat(sender_region, recipient_region, u64_to_bytes(ts)))
-    let route_id = sha3_256(route_seed)
+    let route_id = sha3_512(route_seed)
     let expires = ts + 3600000
 
     RelayRoute {
@@ -215,7 +215,7 @@ circuit generate_cover_traffic(config: CoverTrafficConfig, session_id: bytes(32)
     let padded = pad_to_size(random_payload, 4096)
     let jitter = csprng_u32(seed) % config.jitter_ms
     let delayed = delay_ms(padded, jitter)
-    let packet_id = sha3_256(concat(seed, u64_to_bytes(now())))
+    let packet_id = sha3_512(concat(seed, u64_to_bytes(now())))
 
     RelayPacket {
         onion_layers: padded,
@@ -252,7 +252,7 @@ circuit strip_relay_layer(
     let inner = bit_slice(packet.onion_layers, (1568 + 16) * 8, 4096 * 8)
 
     let layer_key = blake3(mlkem_decaps(relay_sk, kem_ct))
-    let layer_nonce = bit_slice(sha3_256(concat(layer_key, u64_to_bytes(packet.hop_index))), 0, 96)
+    let layer_nonce = bit_slice(sha3_512(concat(layer_key, u64_to_bytes(packet.hop_index))), 0, 96)
     let hop_header = concat(relay_id, u8_to_bytes(packet.hop_index))
     let (decrypted, tag_valid) = aes_gcm_decrypt(layer_key, layer_nonce, inner, tag, hop_header)
 
@@ -331,8 +331,8 @@ test golden "strip_layer_preserves_size" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
-    function: "sha3_256"
+kat_vector "sha3_512_empty" {
+    function: "sha3_512"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }

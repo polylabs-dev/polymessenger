@@ -96,7 +96,7 @@ circuit classify_message(content: bytes, sender_id: bytes(16), conversation_id: 
     cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_query, now]
 {
-    let content_hash = sha3_256(content)
+    let content_hash = sha3_512(content)
     let ts = now()
     let tokens = eslm_tokenize(content, 512)
     let embeddings = eslm_embed(tokens, "polymsg-classify-v1")
@@ -132,7 +132,7 @@ circuit check_spam(content: bytes, sender_id: bytes(16), contact_age_hours: u64)
     cortex on_anomaly: alert "messenger-team"
     wasm_abi [eslite_query]
 {
-    let msg_hash = sha3_256(content)
+    let msg_hash = sha3_512(content)
     let tokens = eslm_tokenize(content, 256)
     let repetition = eslm_repetition_score(tokens)
     let reputation = load_reputation(sender_id)
@@ -161,7 +161,7 @@ circuit detect_phishing(content: bytes, known_contacts: u32) -> PhishingSignal
     wasm_abi [eslite_query]
 {
     let urls = extract_urls(content)
-    let url_hash = if len(urls) > 0 { sha3_256(urls[0]) } else { empty_bytes(32) }
+    let url_hash = if len(urls) > 0 { sha3_512(urls[0]) } else { empty_bytes(32) }
     let domain_sim = eslm_domain_similarity(urls, "polymsg-phishing-v1")
     let link_mismatch = eslm_link_text_mismatch(content, urls)
     let urgency = eslm_urgency_score(content)
@@ -237,7 +237,7 @@ test golden "classify_safe_message" {
     assert {
         result.category == 0
         result.confidence > 500
-        result.message_hash == sha3_256(input.content)
+        result.message_hash == sha3_512(input.content)
     }
 }
 
@@ -256,14 +256,14 @@ test golden "detect_phishing_url" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
-    function: "sha3_256"
+kat_vector "sha3_512_empty" {
+    function: "sha3_512"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "sha3_256_abc" {
-    function: "sha3_256"
+kat_vector "sha3_512_abc" {
+    function: "sha3_512"
     input: bytes("abc")
     expected: hex("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
 }

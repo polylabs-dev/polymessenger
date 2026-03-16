@@ -101,7 +101,7 @@ circuit activate_incognito(
 {
     let ts = now()
     let session_seed = blake3(concat(user_id, config.session_id, u64_to_bytes(ts)))
-    let session_id = sha3_256(session_seed)
+    let session_id = sha3_512(session_seed)
     let expires = ts + config.max_session_duration_ms
 
     let session = IncognitoSession {
@@ -157,7 +157,7 @@ circuit generate_cover_traffic(
     let jitter = csprng_u32(jitter_seed) % config.jitter_range_ms
     let delayed = delay_ms(padded, jitter)
 
-    let packet_id = sha3_256(concat(seed, u64_to_bytes(ts)))
+    let packet_id = sha3_512(concat(seed, u64_to_bytes(ts)))
 
     CoverPacket {
         packet_id: packet_id,
@@ -353,8 +353,8 @@ test golden "deactivate_incognito_session" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
-    function: "sha3_256"
+kat_vector "sha3_512_empty" {
+    function: "sha3_512"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }

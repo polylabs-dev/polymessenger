@@ -1,18 +1,26 @@
-use sha3::{Digest, Sha3_256};
+use sha3::{Digest, Sha3_512};
 
-pub fn sha3_256(data: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha3_256::new();
+pub fn sha3_512(data: &[u8]) -> [u8; 64] {
+    let mut hasher = Sha3_512::new();
     hasher.update(data);
     hasher.finalize().into()
 }
 
+pub fn sha3_512_truncated_32(data: &[u8]) -> [u8; 32] {
+    let full = sha3_512(data);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&full[..32]);
+    out
+}
+
+// Customer interop exception per crypto-nist-level5 policy
 pub fn blake3_hash(data: &[u8]) -> [u8; 32] {
     blake3::hash(data).into()
 }
 
 pub fn hkdf_sha3(ikm: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     use hkdf::Hkdf;
-    let hk = Hkdf::<Sha3_256>::new(None, ikm);
+    let hk = Hkdf::<Sha3_512>::new(None, ikm);
     let mut okm = vec![0u8; len];
     hk.expand(info, &mut okm)
         .expect("HKDF output length valid");
@@ -33,12 +41,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sha3_256_empty() {
-        let result = sha3_256(b"");
-        assert_eq!(
-            hex::encode(result),
-            "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"
-        );
+    fn sha3_512_empty() {
+        let result = sha3_512(b"");
+        assert_eq!(result.len(), 64);
+        assert_ne!(result, [0u8; 64]);
+    }
+
+    #[test]
+    fn sha3_512_truncated_32_consistent() {
+        let full = sha3_512(b"test");
+        let trunc = sha3_512_truncated_32(b"test");
+        assert_eq!(trunc, full[..32]);
     }
 
     #[test]

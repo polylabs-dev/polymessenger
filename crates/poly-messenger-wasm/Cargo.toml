@@ -1,0 +1,28 @@
+[package]
+name = "poly-messenger-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASM entry point for Poly Messenger — browser-side PQ encrypted messaging"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+poly-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+serde-wasm-bindgen.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

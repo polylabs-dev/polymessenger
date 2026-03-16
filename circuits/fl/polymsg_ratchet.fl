@@ -135,14 +135,14 @@ circuit init_ratchet(
     let chain_seed = bit_slice(root_material, 256, 512)
 
     let send_chain = if is_initiator {
-        sha3_256(concat(chain_seed, 0x01))
+        sha3_512(concat(chain_seed, 0x01))
     } else {
-        sha3_256(concat(chain_seed, 0x02))
+        sha3_512(concat(chain_seed, 0x02))
     }
     let recv_chain = if is_initiator {
-        sha3_256(concat(chain_seed, 0x02))
+        sha3_512(concat(chain_seed, 0x02))
     } else {
-        sha3_256(concat(chain_seed, 0x01))
+        sha3_512(concat(chain_seed, 0x01))
     }
 
     RatchetState {
@@ -231,8 +231,8 @@ circuit ratchet_decrypt(
     wasm_abi [eslite_query, eslite_insert]
     fuzz_target
 {
-    let their_pk_hash = sha3_256(header.ratchet_pubkey)
-    let current_pk_hash = sha3_256(state.their_ratchet_pubkey)
+    let their_pk_hash = sha3_512(header.ratchet_pubkey)
+    let current_pk_hash = sha3_512(state.their_ratchet_pubkey)
 
     let working_state = if their_pk_hash != current_pk_hash {
         let skipped = skip_message_keys(state, state.recv_chain_index, header.previous_chain_length)
@@ -299,8 +299,8 @@ circuit advance_chain(chain_key: ChainKey, index: u64) -> (MessageKey, ChainKey)
     property safety "key_derivation_deterministic" { same inputs always produce same keys }
     fuzz_target
 {
-    let message_key = sha3_256(concat(chain_key, 0x01, u64_to_bytes(index)))
-    let next_chain_key = sha3_256(concat(chain_key, 0x02, u64_to_bytes(index)))
+    let message_key = sha3_512(concat(chain_key, 0x01, u64_to_bytes(index)))
+    let next_chain_key = sha3_512(concat(chain_key, 0x02, u64_to_bytes(index)))
     zeroize(chain_key)
     (message_key, next_chain_key)
 }
@@ -320,7 +320,7 @@ circuit skip_message_keys(state: RatchetState, current: u64, target: u64) -> Rat
 {
     let working_chain = state.recv_chain_key
     let skipped = state.skipped_keys
-    let pk_hash = sha3_256(state.their_ratchet_pubkey)
+    let pk_hash = sha3_512(state.their_ratchet_pubkey)
     parallel for i in current..target {
         let (mk, next) = advance_chain(working_chain, i)
         let entry = SkippedKeyEntry {
@@ -398,19 +398,19 @@ test golden "chain_advance_produces_independent_keys" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
-    function: "sha3_256"
+kat_vector "sha3_512_empty" {
+    function: "sha3_512"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
 
-kat_vector "sha3_256_abc" {
-    function: "sha3_256"
+kat_vector "sha3_512_abc" {
+    function: "sha3_512"
     input: bytes("abc")
     expected: hex("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
 }
 
-kat_vector "hkdf_sha3_256_ratchet_derivation" {
+kat_vector "hkdf_sha3_512_ratchet_derivation" {
     function: "hkdf_sha3"
     ikm: hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
     salt: hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")

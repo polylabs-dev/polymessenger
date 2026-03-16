@@ -123,7 +123,7 @@ circuit establish_session(
     let shared_secret = mlkem_decaps(initiator_sk, kem_result)
     let session_context = blake3(concat(initiator_id, responder_id))
     let session_key = hkdf_sha3(shared_secret, session_context, 32)
-    let session_id = sha3_256(concat(session_key, session_context))
+    let session_id = sha3_512(concat(session_key, session_context))
     let ts = now()
     let establishment = SessionEstablishment {
         session_id: bit_slice(session_id, 0, 256),
@@ -234,7 +234,7 @@ circuit rotate_session_key(
 {
     let rotation_context = concat(session_id, u64_to_bytes(rotation_index))
     let new_key = hkdf_sha3(current_key, rotation_context, 32)
-    let old_key_hash = sha3_256(current_key)
+    let old_key_hash = sha3_512(current_key)
     zeroize(current_key)
     let rotation = SessionRotation {
         session_id: session_id,
@@ -288,7 +288,7 @@ test golden "session_key_rotation_produces_new_key" {
     assert {
         result.new_key != input.current_key
         len(result.new_key) == 32
-        result.old_key_hash == sha3_256(input.current_key)
+        result.old_key_hash == sha3_512(input.current_key)
         result.rotation_index == 1
     }
 }
@@ -305,8 +305,8 @@ kat_vector "aes_gcm_256_nist_empty" {
     expected_tag: hex("530f8afbc74536b9a963b4f1c4cb738b")
 }
 
-kat_vector "sha3_256_empty" {
-    function: "sha3_256"
+kat_vector "sha3_512_empty" {
+    function: "sha3_512"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
@@ -317,7 +317,7 @@ kat_vector "blake3_empty" {
     expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
 }
 
-kat_vector "hkdf_sha3_256_basic" {
+kat_vector "hkdf_sha3_512_basic" {
     function: "hkdf_sha3"
     ikm: hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
     salt: hex("000102030405060708090a0b0c")

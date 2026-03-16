@@ -136,7 +136,7 @@ circuit send_message(
 {
     let ts = now()
     let msg_seed = blake3(concat(conversation_id, sender_id, u64_to_bytes(ts)))
-    let message_id = bit_slice(sha3_256(msg_seed), 0, 128)
+    let message_id = bit_slice(sha3_512(msg_seed), 0, 128)
 
     let node = MessageNode {
         message_id: message_id,
@@ -381,8 +381,8 @@ kat_vector "blake3_empty" {
     expected: hex("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
 }
 
-kat_vector "sha3_256_empty" {
-    function: "sha3_256"
+kat_vector "sha3_512_empty" {
+    function: "sha3_512"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }

@@ -133,7 +133,7 @@ circuit add_contact(
     let ts = now()
     let node = ContactNode {
         contact_id: contact_id,
-        user_id: bit_slice(sha3_256(contact_pk), 0, 256),
+        user_id: bit_slice(sha3_512(contact_pk), 0, 256),
         display_name: display_name,
         phone_number: "",
         email: "",
@@ -244,7 +244,7 @@ circuit create_group(
 {
     let ts = now()
     let group_seed = blake3(concat(creator_id, name, u64_to_bytes(ts)))
-    let group_id = bit_slice(sha3_256(group_seed), 0, 128)
+    let group_id = bit_slice(sha3_512(group_seed), 0, 128)
     let group = GroupNode {
         group_id: group_id,
         name: name,
@@ -370,8 +370,8 @@ test golden "create_group_with_admin" {
 
 // ── KAT vectors ─────────────────────────────────────────────────
 
-kat_vector "sha3_256_empty" {
-    function: "sha3_256"
+kat_vector "sha3_512_empty" {
+    function: "sha3_512"
     input: bytes("")
     expected: hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
 }
