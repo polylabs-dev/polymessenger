@@ -1,0 +1,16 @@
+[package]
+name = "poly-sdk"
+description = "Poly Messenger SDK — client library for agent and human messaging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+poly-core.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+bytes.workspace = true
