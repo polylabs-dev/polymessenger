@@ -9,7 +9,7 @@ Poly Messenger consolidates work from three source repos into a single fresh bui
 
 | Source Repo | Version | What It Contains | Disposition |
 |-------------|---------|------------------|-------------|
-| `polyquantum/polymessenger` | v0.8.1 | Backend: 4 `.escir.yaml` circuits, 5 Rust crates, ESF schemas, Incognito specs | **Reference only** — redesign on v0.9.1 |
+| `polyquantum/polymessenger` | v0.8.1 | Backend: 4 `.flir.yaml` circuits, 5 Rust crates, ESF schemas, Incognito specs | **Reference only** — redesign on v0.9.1 |
 | `polyquantum/polymessenger-app` | v0.8.0 | Mobile: React Native 0.74.2, 25 screens, 16 hooks, 64 services, 28 components | **Selective extraction** — screens/hooks/types |
 | `polylabs-dev/polymessenger` | v0.9.1 target | Fresh build: ARCHITECTURE.md v3.0, 42 reference files, zero implementation | **Canonical repo** |
 
@@ -88,7 +88,7 @@ Bring over valuable components from polyquantum repos. The 42 files already in `
 | Component | Why Not |
 |-----------|---------|
 | 5 Rust crates (poly-core, poly-relay, poly-edge, poly-sdk-backend, poly-test) | v0.8.1, flat structs, HashMap storage, stub servers, zero graph/DAG |
-| 4 `.escir.yaml` circuits | Translate intent to `.fl`, don't port the YAML |
+| 4 `.flir.yaml` circuits | Translate intent to `.fl`, don't port the YAML |
 | 64 service files | Tightly coupled to v0.8.0 `@estream/react-native` SDK |
 | 4 SDK packages | v0.8.x wrappers — rebase on PolyKit + eStream v0.9.1 |
 | Navigation, design system, animations | Build properly with React Navigation v7, design tokens, Reanimated 3 |

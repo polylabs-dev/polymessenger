@@ -4,7 +4,7 @@
 **Date**: February 2026
 **Platform**: eStream v0.8.3
 **Upstream**: PolyKit v0.3.0, eStream graph/DAG constructs
-**Build Pipeline**: FastLang (.fl) → ESCIR → Rust/WASM codegen → .escd
+**Build Pipeline**: FastLang (.fl) → FLIR → Rust/WASM codegen → .escd
 
 ---
 
