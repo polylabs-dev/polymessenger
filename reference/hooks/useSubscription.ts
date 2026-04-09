@@ -26,7 +26,7 @@
  * }
  * ```
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  * @issue #205
  */
 
@@ -219,7 +219,7 @@ export function useSubscription(
     }));
 
   // Upgrade URL
-  const upgradeUrl = 'https://polymessenger.app/upgrade';
+  const upgradeUrl = 'https://qmessenger.app/upgrade';
 
   // Open upgrade page
   const openUpgrade = useCallback(

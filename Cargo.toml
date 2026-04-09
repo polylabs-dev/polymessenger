@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/poly-core",
-    "crates/poly-sdk",
-    "crates/poly-messenger-wasm",
+    "crates/q-core",
+    "crates/q-sdk",
+    "crates/q-messenger-wasm",
 ]
 
 [workspace.package]
 version = "0.12.0"
 edition = "2021"
 license = "LicenseRef-PolyQuantum-Commercial"
-repository = "https://github.com/polylabs-dev/polymessenger"
+repository = "https://github.com/polylabs-dev/qmessenger"
 
 [workspace.dependencies]
-poly-core = { path = "crates/poly-core" }
-poly-sdk = { path = "crates/poly-sdk" }
+q-core = { path = "crates/q-core" }
+q-sdk = { path = "crates/q-sdk" }
 ml-kem = "0.2"
 aes-gcm = "0.10"
 sha3 = "0.10"

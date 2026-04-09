@@ -4,7 +4,7 @@
  * React hook for monitoring and tracking call quality metrics.
  * Provides aggregated quality scores and historical data.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';

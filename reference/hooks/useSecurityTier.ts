@@ -22,7 +22,7 @@
  * }
  * ```
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  * @issue #203
  */
 

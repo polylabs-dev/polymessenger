@@ -1,13 +1,13 @@
-/// Poly Messenger Contact Graph — graph contact_network (v0.11.0)
+/// Q Messenger Contact Graph — graph contact_network (v0.11.0)
 /// Stratum graph storage + Cortex AI governance
-/// govern lex esn/global/org/polylabs/messenger
+/// govern lex esn/global/org/polyqlabs/messenger
 ///
 /// Contacts, groups, trust relationships, and blocking form a graph.
 /// Replaces flat contact lists with a relational model supporting
 /// trust verification, group membership, and blocking.
 
-import polykit_identity from "../../../polykit/circuits/fl/polykit_identity.fl"
-import polykit_metering from "../../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_identity from "../../../qkit/circuits/fl/qkit_identity.fl"
+import qkit_metering from "../../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Data: Node types (data + store graph + cortex) ──────────────
 
@@ -23,7 +23,7 @@ data ContactNode : messenger v1 {
     verified_at: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger
+    govern lex esn/global/org/polyqlabs/messenger
     cortex {
         redact [phone_number, email]
         obfuscate [display_name, user_id]
@@ -39,7 +39,7 @@ data GroupNode : messenger v1 {
     created_at: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger
+    govern lex esn/global/org/polyqlabs/messenger
     cortex {
         obfuscate [creator_id]
         infer on_write
@@ -116,7 +116,7 @@ circuit add_contact(
     display_name: bytes(128),
 ) -> ContactNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -129,7 +129,7 @@ circuit add_contact(
     property liveness "contact_reachable" { eventually(contact_id in graph) }
     wasm_abi [eslite_insert, stream_emit, now]
 {
-    let contact_id = polykit_identity.derive_user_id(contact_pk)
+    let contact_id = qkit_identity.derive_user_id(contact_pk)
     let ts = now()
     let node = ContactNode {
         contact_id: contact_id,
@@ -161,7 +161,7 @@ circuit verify_contact(
     verification_payload: bytes,
 ) -> bool
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -175,7 +175,7 @@ circuit verify_contact(
     wasm_abi [eslite_query, eslite_insert, now]
 {
     let contact = graph_lookup(contact_network, contact_id)
-    let valid = polykit_identity.verify_signature(
+    let valid = qkit_identity.verify_signature(
         contact.signing_pubkey,
         verification_payload,
         verification_signature,
@@ -203,7 +203,7 @@ circuit verify_contact(
 
 circuit block_contact(owner_id: bytes(16), contact_id: bytes(16), reason: u8) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -230,7 +230,7 @@ circuit create_group(
     max_members: u32,
 ) -> GroupNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -260,7 +260,7 @@ circuit create_group(
 
 circuit join_group(user_id: bytes(16), group_id: bytes(16), invited_by: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -287,7 +287,7 @@ circuit join_group(user_id: bytes(16), group_id: bytes(16), invited_by: bytes(16
 
 circuit leave_group(user_id: bytes(16), group_id: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true

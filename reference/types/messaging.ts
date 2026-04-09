@@ -1,5 +1,5 @@
 /**
- * Messaging Types for Poly Messenger
+ * Messaging Types for Q Messenger
  * 
  * Core type definitions for PQ-encrypted messaging.
  */

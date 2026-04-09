@@ -4,7 +4,7 @@
  * Main interface for multi-participant voice and video calls.
  * Features adaptive grid layout for participant video feeds.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useState, useEffect, useCallback } from 'react';

@@ -1,5 +1,5 @@
-/// Poly Messenger Incognito — Incognito mode activation and cover traffic (v0.11.0)
-/// Stratum: kv store + lex governance under esn/global/org/polylabs/messenger/incognito
+/// Q Messenger Incognito — Incognito mode activation and cover traffic (v0.11.0)
+/// Stratum: kv store + lex governance under esn/global/org/polyqlabs/messenger/incognito
 /// Cortex: redaction, write-time inference, anomaly alerting
 ///
 /// Incognito mode is a compiled WASM circuit — no UI toggle.
@@ -7,9 +7,9 @@
 /// Traffic mimicry integration ensures cover traffic is statistically
 /// indistinguishable from real messaging patterns.
 ///
-/// govern lex esn/global/org/polylabs/messenger/incognito
+/// govern lex esn/global/org/polyqlabs/messenger/incognito
 
-import polykit_blind_relay from "../../polykit/circuits/fl/apps/polykit_blind_relay.fl"
+import qkit_blind_relay from "../../qkit/circuits/fl/apps/qkit_blind_relay.fl"
 
 // ── Data Declarations (v0.11.0 Stratum + Cortex) ────────────────
 
@@ -24,7 +24,7 @@ data IncognitoConfig : messenger v1 {
     enabled: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/incognito
+    govern lex esn/global/org/polyqlabs/messenger/incognito
     cortex {
         redact [session_id]
         infer on_write
@@ -44,7 +44,7 @@ data IncognitoSession : messenger v1 {
     metadata_leak_detected: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/incognito
+    govern lex esn/global/org/polyqlabs/messenger/incognito
     cortex {
         redact [session_id, user_id]
         infer on_write
@@ -59,7 +59,7 @@ data CoverPacket : messenger v1 {
     jitter_applied_ms: u32,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/incognito
+    govern lex esn/global/org/polyqlabs/messenger/incognito
     cortex {
         redact [packet_id, session_id, payload]
         infer on_write
@@ -85,7 +85,7 @@ circuit activate_incognito(
     config: IncognitoConfig,
 ) -> IncognitoSession
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/incognito
+    lex esn/global/org/polyqlabs/messenger/incognito
     precision C
     constant_time true
     meters [compute_cycles, memory_bytes]
@@ -129,7 +129,7 @@ circuit generate_cover_traffic(
     config: IncognitoConfig,
 ) -> CoverPacket
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/incognito
+    lex esn/global/org/polyqlabs/messenger/incognito
     precision C
     blind full
     constant_time true
@@ -171,7 +171,7 @@ circuit generate_cover_traffic(
 /// Deactivate an incognito session
 circuit deactivate_incognito(session_id: bytes(32), user_id: bytes(16)) -> IncognitoSession
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/incognito
+    lex esn/global/org/polyqlabs/messenger/incognito
     precision C
     constant_time true
     meters [compute_cycles]
@@ -210,7 +210,7 @@ circuit deactivate_incognito(session_id: bytes(32), user_id: bytes(16)) -> Incog
 /// Check for metadata leaks in an active incognito session
 circuit check_metadata_leak(session: IncognitoSession) -> bool
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/incognito
+    lex esn/global/org/polyqlabs/messenger/incognito
     precision C
     constant_time true
     meters [compute_cycles]

@@ -1,5 +1,5 @@
 [workspace]
-name = "polymessenger"
+name = "qmessenger"
 version = "0.22.0"
 
 [platform]
@@ -28,10 +28,10 @@ fuzz_corpus = ".es/fuzz_corpus"
 
 [signing]
 algorithm = "ml-dsa-87"
-key_id = "polylabs-prime-v1"
+key_id = "polyqlabs-prime-v1"
 
 [telemetry]
-lex_namespace = "esn/global/org/polylabs/messenger"
+lex_namespace = "esn/global/org/polyqlabs/messenger"
 streamsight = true
 cohort_min_size = 50
 

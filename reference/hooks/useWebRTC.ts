@@ -3,7 +3,7 @@
  *
  * React hook for managing WebRTC streams and connections.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';

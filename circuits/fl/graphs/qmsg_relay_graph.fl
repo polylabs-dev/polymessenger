@@ -1,6 +1,6 @@
-/// Poly Messenger Relay Graph — graph relay_mesh (v0.11.0)
+/// Q Messenger Relay Graph — graph relay_mesh (v0.11.0)
 /// Stratum graph storage + Cortex AI governance
-/// govern lex esn/global/org/polylabs/messenger/relay
+/// govern lex esn/global/org/polyqlabs/messenger/relay
 ///
 /// The blind relay network modeled as a graph.
 /// Relay nodes and routes are typed with real-time overlays
@@ -8,7 +8,7 @@
 /// AI feed selects optimal routes based on jurisdiction diversity,
 /// latency, and available capacity.
 
-import polykit_metering from "../../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_metering from "../../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Data: Node types (data + store graph + cortex) ──────────────
 
@@ -24,7 +24,7 @@ data RelayNode : messenger v1 {
     last_heartbeat: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex esn/global/org/polyqlabs/messenger/relay
     cortex {
         redact [endpoint_address]
         obfuscate [jurisdiction]
@@ -94,7 +94,7 @@ circuit register_relay(
     registration_sig: bytes(4627),
 ) -> RelayNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     status production
     povc true
@@ -150,7 +150,7 @@ circuit select_route(
     security_tier: u8,
 ) -> [RelayNode; 5]
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     status production
     povc true
@@ -209,7 +209,7 @@ circuit update_relay_health(
     cover_rate: u32,
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     status production
     povc true
@@ -264,7 +264,7 @@ circuit rotate_route(
     security_tier: u8,
 ) -> [RelayNode; 5]
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     status production
     povc true

@@ -1,5 +1,5 @@
 /**
- * Threshold Signing Types for Poly Messenger
+ * Threshold Signing Types for Q Messenger
  * 
  * Lattice amplification for guardian recovery and multi-device signing.
  */

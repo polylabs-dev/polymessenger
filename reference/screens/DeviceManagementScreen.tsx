@@ -6,7 +6,7 @@
  * - Link new device via Spark scan
  * - Revoke device access with Spark confirmation
  * 
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useState, useCallback } from 'react';
@@ -256,7 +256,7 @@ export function DeviceManagementScreen({ onBack }: DeviceManagementScreenProps):
           
           <View style={styles.modalContent}>
             <Text style={styles.modalInstructions}>
-              On your new device, open Poly Messenger and scan this Spark
+              On your new device, open Q Messenger and scan this Spark
             </Text>
             
             {linkingSparkCode && (
@@ -265,7 +265,7 @@ export function DeviceManagementScreen({ onBack }: DeviceManagementScreenProps):
                   walletId="device_link"
                   displayMode="full"
                   size={280}
-                  actionType="app.polymessenger/device.link"
+                  actionType="app.qmessenger/device.link"
                   autoRefresh={true}
                 />
               </View>

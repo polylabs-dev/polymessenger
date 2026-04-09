@@ -3,7 +3,7 @@
  *
  * Display for incoming calls with accept/reject buttons.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useEffect, useState } from 'react';

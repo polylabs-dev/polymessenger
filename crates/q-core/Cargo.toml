@@ -1,6 +1,6 @@
 [package]
-name = "poly-core"
-description = "Poly Messenger core types, crypto, graph runtime, and circuit implementations"
+name = "q-core"
+description = "Q Messenger core types, crypto, graph runtime, and circuit implementations"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

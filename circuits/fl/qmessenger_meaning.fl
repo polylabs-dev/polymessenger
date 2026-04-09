@@ -2,15 +2,15 @@
 /// PolyMessenger CE Meaning Domains — 3 meaning domains, 1 noise filter,
 /// 2 SME panels for the PolyMessenger cognitive integration.
 ///
-/// Epic: polymessenger#TBD (CE + App Graph Integration)
-/// govern lex polylabs/polymessenger/cognitive
+/// Epic: qmessenger#TBD (CE + App Graph Integration)
+/// govern lex polyqlabs/qmessenger/cognitive
 
-lex polylabs/polymessenger/cognitive
+lex polyqlabs/qmessenger/cognitive
 
 @target software
 @codegen_targets ["wasm", "rust"]
 
-import "polykit/circuits/fl/polykit_cognitive.fl" {
+import "qkit/circuits/fl/qkit_cognitive.fl" {
     ProductMeaningDomain, MeaningIngestion, DomainId, MeaningId,
     ObservationHash, NoiseFilterId, SmePanelId,
     register_meaning_domain,
@@ -23,37 +23,37 @@ type ThresholdConfig = bytes(32)
 
 // ── Domain Data ─────────────────────────────────────────────────────────────────
 
-data ConversationPatternsDomain : polymessenger/cognitive v1 {
+data ConversationPatternsDomain : qmessenger/cognitive v1 {
     domain_id: DomainId,
     response_time_window_ms: u64,
     group_dynamics_lurker_threshold_bps: u16,
     conversation_decay_half_life_ms: u64,
     thread_depth_alert_threshold: u16,
-}   store kv  govern lex polylabs/polymessenger/cognitive
+}   store kv  govern lex polyqlabs/qmessenger/cognitive
     cortex { infer on_write; on_anomaly alert "messenger-team" }
 
-data MessagingSecurityDomain : polymessenger/cognitive v1 {
+data MessagingSecurityDomain : qmessenger/cognitive v1 {
     domain_id: DomainId,
     ratchet_stall_threshold_ms: u64,
     skipped_key_cache_limit: u16,
     decrypt_failure_rate_ceiling_bps: u16,
     relay_trust_floor_score: u8,
     jurisdiction_concentration_ceiling_bps: u16,
-}   store kv  govern lex polylabs/polymessenger/cognitive
+}   store kv  govern lex polyqlabs/qmessenger/cognitive
     cortex { infer on_write; on_anomaly alert "messenger-security" }
 
-data MessagingEngagementDomain : polymessenger/cognitive v1 {
+data MessagingEngagementDomain : qmessenger/cognitive v1 {
     domain_id: DomainId,
     dau_wau_ratio_floor_bps: u16,
     volume_spike_sigma: u8,
     feature_adoption_window_days: u16,
     incognito_usage_threshold_bps: u16,
-}   store kv  govern lex polylabs/polymessenger/cognitive
+}   store kv  govern lex polyqlabs/qmessenger/cognitive
     cortex { infer on_write; on_anomaly alert "messenger-team" }
 
 // ── Noise Filter ────────────────────────────────────────────────────────────────
 
-data MessengerNoiseFilterConfig : polymessenger/cognitive v1 {
+data MessengerNoiseFilterConfig : qmessenger/cognitive v1 {
     filter_id: NoiseFilterId,
     suppress_delivery_receipts: bool,
     suppress_typing_indicators: bool,
@@ -62,29 +62,29 @@ data MessengerNoiseFilterConfig : polymessenger/cognitive v1 {
     presence_flicker_window_ms: u64,
     min_signal_confidence: u8,
     dedup_window_ms: u64,
-}   store kv  govern lex polylabs/polymessenger/cognitive
+}   store kv  govern lex polyqlabs/qmessenger/cognitive
     cortex { infer on_write }
 
 // ── SME Panels ──────────────────────────────────────────────────────────────────
 
-data E2EEncryptionHealthPanel : polymessenger/cognitive v1 {
+data E2EEncryptionHealthPanel : qmessenger/cognitive v1 {
     panel_id: SmePanelId,
     domain_scope: bytes(64),
     min_panelists: u8,
     specializations: list<bytes(32)>,
     calibration_accuracy_floor_bps: u16,
     review_timeout_ms: u64,
-}   store kv  govern lex polylabs/polymessenger/cognitive
+}   store kv  govern lex polyqlabs/qmessenger/cognitive
     cortex { infer on_write; on_anomaly alert "messenger-security" }
 
-data RelayOptimizationPanel : polymessenger/cognitive v1 {
+data RelayOptimizationPanel : qmessenger/cognitive v1 {
     panel_id: SmePanelId,
     domain_scope: bytes(64),
     min_panelists: u8,
     specializations: list<bytes(32)>,
     calibration_accuracy_floor_bps: u16,
     review_timeout_ms: u64,
-}   store kv  govern lex polylabs/polymessenger/cognitive
+}   store kv  govern lex polyqlabs/qmessenger/cognitive
     cortex { infer on_write; on_anomaly alert "messenger-ops" }
 
 // ── Streams & Series ────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ stream conversation_pattern_obs: event<MeaningIngestion> { retention 90d;  consu
 stream messaging_security_obs:   event<MeaningIngestion> { retention 365d; consumers [streamsight, cortex, audit_trail] }
 stream messaging_engagement_obs: event<MeaningIngestion> { retention 90d;  consumers [streamsight, cortex] }
 
-series polymsg_cognitive_series {
+series qmsg_cognitive_series {
     over ConversationPatternsDomain,
     fields: [response_time_p50, response_time_p99, group_activity_balance,
              ratchet_health_score, relay_trust_score, decrypt_failure_rate,
@@ -109,7 +109,7 @@ extern {
 // ── Domain Registration Circuits ────────────────────────────────────────────────
 
 circuit register_conversation_patterns_domain() -> ProductMeaningDomain
-    profile poly_framework_standard  lex polylabs/polymessenger/cognitive  precision B
+    profile poly_framework_standard  lex polyqlabs/qmessenger/cognitive  precision B
     rbac [admin, operator]  observe metrics: [domains_registered]
     meters [compute_cycles, memory_bytes, storage]
     wasm_abi [store_get, store_put, emit, now]
@@ -118,11 +118,11 @@ circuit register_conversation_patterns_domain() -> ProductMeaningDomain
         assert len(r.domain_id) == 32
         assert r.crystallization_threshold == 70
     }
-{ register_meaning_domain(bytes(128, "polylabs/polymessenger"), bytes(64, "messaging/conversation_patterns"),
+{ register_meaning_domain(bytes(128, "polyqlabs/qmessenger"), bytes(64, "messaging/conversation_patterns"),
     bytes(256, "Response time distribution, group dynamics, conversation lifecycle and decay"), 70, 75) }
 
 circuit register_messaging_security_domain() -> ProductMeaningDomain
-    profile poly_framework_standard  lex polylabs/polymessenger/cognitive  precision B
+    profile poly_framework_standard  lex polyqlabs/qmessenger/cognitive  precision B
     rbac [admin, operator]  observe metrics: [domains_registered]
     meters [compute_cycles, memory_bytes, storage]
     wasm_abi [store_get, store_put, emit, now]
@@ -131,11 +131,11 @@ circuit register_messaging_security_domain() -> ProductMeaningDomain
         assert len(r.domain_id) == 32
         assert r.crystallization_threshold == 85
     }
-{ register_meaning_domain(bytes(128, "polylabs/polymessenger"), bytes(64, "messaging/security"),
+{ register_meaning_domain(bytes(128, "polyqlabs/qmessenger"), bytes(64, "messaging/security"),
     bytes(256, "Ratchet health, relay trust scores, encryption failures, session establishment errors"), 85, 95) }
 
 circuit register_messaging_engagement_domain() -> ProductMeaningDomain
-    profile poly_framework_standard  lex polylabs/polymessenger/cognitive  precision B
+    profile poly_framework_standard  lex polyqlabs/qmessenger/cognitive  precision B
     rbac [admin, operator]  observe metrics: [domains_registered]
     meters [compute_cycles, memory_bytes, storage]
     wasm_abi [store_get, store_put, emit, now]
@@ -144,13 +144,13 @@ circuit register_messaging_engagement_domain() -> ProductMeaningDomain
         assert len(r.domain_id) == 32
         assert r.crystallization_threshold == 65
     }
-{ register_meaning_domain(bytes(128, "polylabs/polymessenger"), bytes(64, "messaging/engagement"),
+{ register_meaning_domain(bytes(128, "polyqlabs/qmessenger"), bytes(64, "messaging/engagement"),
     bytes(256, "Active users DAU/WAU/MAU, message volume trends, feature adoption rates"), 65, 60) }
 
 // ── Noise Filter Setup ──────────────────────────────────────────────────────────
 
 circuit configure_messenger_noise_filter() -> MessengerNoiseFilterConfig
-    profile poly_framework_standard  lex polylabs/polymessenger/cognitive  precision B
+    profile poly_framework_standard  lex polyqlabs/qmessenger/cognitive  precision B
     rbac [admin]  observe metrics: [noise_filters_configured]
     meters [compute_cycles, storage]  wasm_abi [store_get, store_put, emit, now]
     test golden "configure_noise_filter" {
@@ -161,7 +161,7 @@ circuit configure_messenger_noise_filter() -> MessengerNoiseFilterConfig
         assert r.min_signal_confidence == 60
     }
 {
-    let fid = sha3_256(bytes(32, "polylabs/noise/polymessenger"))
+    let fid = sha3_256(bytes(32, "polyqlabs/noise/qmessenger"))
     let cfg = MessengerNoiseFilterConfig {
         filter_id: fid,
         suppress_delivery_receipts: true,
@@ -179,7 +179,7 @@ circuit configure_messenger_noise_filter() -> MessengerNoiseFilterConfig
 // ── SME Panel Setup ─────────────────────────────────────────────────────────────
 
 circuit configure_e2e_encryption_health_panel() -> E2EEncryptionHealthPanel
-    profile poly_framework_standard  lex polylabs/polymessenger/cognitive  precision B
+    profile poly_framework_standard  lex polyqlabs/qmessenger/cognitive  precision B
     rbac [admin]  observe metrics: [sme_panels_configured]
     meters [compute_cycles, storage]  wasm_abi [store_get, store_put, emit, now]
     test golden "configure_e2e_panel" {
@@ -188,7 +188,7 @@ circuit configure_e2e_encryption_health_panel() -> E2EEncryptionHealthPanel
         assert r.calibration_accuracy_floor_bps >= 7000
     }
 {
-    let pid = sha3_256(bytes(32, "polylabs/sme/polymsg_e2e"))
+    let pid = sha3_256(bytes(32, "polyqlabs/sme/qmsg_e2e"))
     let p = E2EEncryptionHealthPanel {
         panel_id: pid,
         domain_scope: bytes(64, "messaging/security"),
@@ -203,7 +203,7 @@ circuit configure_e2e_encryption_health_panel() -> E2EEncryptionHealthPanel
 }
 
 circuit configure_relay_optimization_panel() -> RelayOptimizationPanel
-    profile poly_framework_standard  lex polylabs/polymessenger/cognitive  precision B
+    profile poly_framework_standard  lex polyqlabs/qmessenger/cognitive  precision B
     rbac [admin]  observe metrics: [sme_panels_configured]
     meters [compute_cycles, storage]  wasm_abi [store_get, store_put, emit, now]
     test golden "configure_relay_panel" {
@@ -212,7 +212,7 @@ circuit configure_relay_optimization_panel() -> RelayOptimizationPanel
         assert r.calibration_accuracy_floor_bps >= 7000
     }
 {
-    let pid = sha3_256(bytes(32, "polylabs/sme/polymsg_relay"))
+    let pid = sha3_256(bytes(32, "polyqlabs/sme/qmsg_relay"))
     let p = RelayOptimizationPanel {
         panel_id: pid,
         domain_scope: bytes(64, "messaging/security"),
@@ -228,8 +228,8 @@ circuit configure_relay_optimization_panel() -> RelayOptimizationPanel
 
 // ── CE Orchestrator ─────────────────────────────────────────────────────────────
 
-circuit polymessenger_register_ce(product_lex: string) -> bool
-    profile poly_framework_standard  lex polylabs/polymessenger/cognitive  precision B
+circuit qmessenger_register_ce(product_lex: string) -> bool
+    profile poly_framework_standard  lex polyqlabs/qmessenger/cognitive  precision B
     rbac [admin]  observe metrics: [ce_registrations]
     meters [compute_cycles, memory_bytes, storage]
     wasm_abi [store_get, store_put, emit, now]
@@ -250,7 +250,7 @@ circuit polymessenger_register_ce(product_lex: string) -> bool
 
 test golden "full_ce_pipeline_setup" {
     exec {
-        let result = polymessenger_register_ce("polylabs/polymessenger")
+        let result = qmessenger_register_ce("polyqlabs/qmessenger")
     }
     assert {
         result == true

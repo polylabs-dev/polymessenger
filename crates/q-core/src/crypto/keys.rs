@@ -78,7 +78,7 @@ mod tests {
     #[test]
     fn session_key_deterministic() {
         let ss = [0xABu8; 32];
-        let ctx = b"poly-messenger-v1";
+        let ctx = b"q-messenger-v1";
         let k1 = derive_session_key(&ss, ctx);
         let k2 = derive_session_key(&ss, ctx);
         assert_eq!(k1, k2);
@@ -87,8 +87,8 @@ mod tests {
     #[test]
     fn different_contexts_yield_different_keys() {
         let ss = [0xABu8; 32];
-        let k1 = derive_session_key(&ss, b"poly-messenger-v1");
-        let k2 = derive_session_key(&ss, b"poly-pass-v1");
+        let k1 = derive_session_key(&ss, b"q-messenger-v1");
+        let k2 = derive_session_key(&ss, b"q-pass-v1");
         assert_ne!(k1, k2);
     }
 

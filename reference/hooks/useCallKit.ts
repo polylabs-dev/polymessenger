@@ -4,7 +4,7 @@
  * React hook for integrating with native CallKit (iOS) and Telecom (Android).
  * Handles system-level call UI and VoIP push notifications.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';

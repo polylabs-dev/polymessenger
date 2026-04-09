@@ -1,13 +1,13 @@
-/// Poly Messenger Conversation DAG — dag message_thread (v0.11.0)
+/// Q Messenger Conversation DAG — dag message_thread (v0.11.0)
 /// Stratum merkle-CSR storage + Cortex AI governance + ML-DSA-87 signing
-/// govern lex esn/global/org/polylabs/messenger
+/// govern lex esn/global/org/polyqlabs/messenger
 ///
 /// Messages form a DAG within each conversation.
 /// Replies create parent edges. Reactions are typed edges.
 /// Threading, ordering, and causal consistency for offline/CRDT scenarios.
 /// Every DAG mutation is PQ-signed and PoVC-attested.
 
-import polykit_metering from "../../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_metering from "../../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Data: Node types (data + store dag + cortex) ────────────────
 
@@ -23,7 +23,7 @@ data MessageNode : messenger v1 {
     classification: u8,
 }
     store dag
-    govern lex esn/global/org/polylabs/messenger
+    govern lex esn/global/org/polyqlabs/messenger
     cortex {
         redact [content_hash, content_preview]
         infer on_write
@@ -120,7 +120,7 @@ circuit send_message(
     reply_to: bytes(16),
 ) -> MessageNode
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -171,7 +171,7 @@ circuit receive_message(
     sealed_envelope_hash: bytes(32),
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -197,7 +197,7 @@ circuit receive_message(
 
 circuit mark_read(message_id: bytes(16), reader_id: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -228,7 +228,7 @@ circuit add_reaction(
     emoji_code: u32,
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -256,7 +256,7 @@ circuit add_reaction(
 
 circuit delete_message(message_id: bytes(16), requester_id: bytes(16)) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true
@@ -282,7 +282,7 @@ circuit delete_message(message_id: bytes(16), requester_id: bytes(16)) -> bool
 
 circuit expire_messages(conversation_id: bytes(16), current_time: u64) -> u64
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger
+    lex esn/global/org/polyqlabs/messenger
     precision C
     status production
     povc true

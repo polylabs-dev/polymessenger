@@ -325,12 +325,12 @@ export function SettingsScreen({ onBack, onViewKeys }: SettingsScreenProps): Rea
             <SettingRow
               icon="📄"
               label="Privacy Policy"
-              onPress={() => Alert.alert('Privacy Policy', 'Poly Messenger collects minimal data. All messages are end-to-end encrypted with post-quantum cryptography. Your data never leaves your device unencrypted.')}
+              onPress={() => Alert.alert('Privacy Policy', 'Q Messenger collects minimal data. All messages are end-to-end encrypted with post-quantum cryptography. Your data never leaves your device unencrypted.')}
             />
             <SettingRow
               icon="📋"
               label="Terms of Service"
-              onPress={() => Alert.alert('Terms of Service', 'By using Poly Messenger, you agree to use the app responsibly and respect others\' privacy.')}
+              onPress={() => Alert.alert('Terms of Service', 'By using Q Messenger, you agree to use the app responsibly and respect others\' privacy.')}
             />
           </View>
         </View>
@@ -355,7 +355,7 @@ export function SettingsScreen({ onBack, onViewKeys }: SettingsScreenProps): Rea
             <Text style={styles.pqBadgeText}>PQ-Protected</Text>
           </View>
           <Text style={styles.footerText}>
-            Poly Messenger by eStream
+            Q Messenger by eStream
           </Text>
           <Text style={styles.footerSubtext}>
             Quantum-resistant messaging

@@ -1,13 +1,13 @@
 /// Spec: specs/POLYMESSENGER_CE_APP_GRAPH_SPEC.md
-/// App Graph for Poly Messenger — 11 ModuleNode definitions composing the
+/// App Graph for Q Messenger — 11 ModuleNode definitions composing the
 /// messenger product into Backend and Shared partitions. Registers intra-graph
-/// REQUIRES edges, PolyKit bridge edges (blind_relay, media_stream), and
+/// REQUIRES edges, QKit bridge edges (blind_relay, media_stream), and
 /// CE meaning/noise/SME edges for cognitive integration.
 ///
-/// Epic: polymessenger#TBD (CE + App Graph Integration)
-/// govern lex polylabs/polymessenger
+/// Epic: qmessenger#TBD (CE + App Graph Integration)
+/// govern lex polyqlabs/qmessenger
 
-lex polylabs/polymessenger
+lex polyqlabs/qmessenger
 
 @target software
 @codegen_targets ["wasm", "rust"]
@@ -23,7 +23,7 @@ import "core/deployment/module_stratum.fl" {
     EDGE_REQUIRES, EDGE_BRIDGE_TO,
 }
 
-import "polykit/circuits/fl/polykit_app_graph.fl" {
+import "qkit/circuits/fl/qkit_app_graph.fl" {
     ProductGraphConfig, make_poly_module, add_poly_module,
     add_poly_edge, add_poly_bridge_edge, add_poly_ce_edges,
     find_poly_module_id,
@@ -37,19 +37,19 @@ import "polykit/circuits/fl/polykit_app_graph.fl" {
 const POLYMSG_VERSION_MAJOR: u32 = 0
 const POLYMSG_VERSION_MINOR: u32 = 12
 const POLYMSG_VERSION_PATCH: u32 = 0
-const POLYMSG_APP_LEX: string = "polylabs/polymessenger"
+const POLYMSG_APP_LEX: string = "polyqlabs/qmessenger"
 const POLYMSG_VERSION_STR: string = "0.12.0"
 const POLYMSG_MODULE_COUNT: u64 = 11
 
 // ── Product Config ─────────────────────────────────────────────────────────────
 
-circuit polymsg_product_config() -> ProductGraphConfig
-    lex polylabs/polymessenger
+circuit qmsg_product_config() -> ProductGraphConfig
+    lex polyqlabs/qmessenger
     @status production
     @precision D
 {
     ProductGraphConfig {
-        product_name: "polymessenger",
+        product_name: "qmessenger",
         product_lex: POLYMSG_APP_LEX,
         version_major: POLYMSG_VERSION_MAJOR,
         version_minor: POLYMSG_VERSION_MINOR,
@@ -62,19 +62,19 @@ circuit polymsg_product_config() -> ProductGraphConfig
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-circuit make_polymsg_module(
+circuit make_qmsg_module(
     name: string,
     partition: u8,
     sla: u8,
     budget: ResourceBudget8D
 ) -> ModuleNode
-    lex polylabs/polymessenger
+    lex polyqlabs/qmessenger
     @status production
     @precision C
     observe metrics: [module_name, aperture_partition]
     meters [compute_cycles]
 {
-    let cfg = polymsg_product_config()
+    let cfg = qmsg_product_config()
     let ver = SemVer {
         major: POLYMSG_VERSION_MAJOR,
         minor: POLYMSG_VERSION_MINOR,
@@ -130,13 +130,13 @@ circuit make_polymsg_module(
 // Module Definitions — 11 ModuleNodes
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── polymsg_encrypt ── ML-KEM session establishment, AES-256-GCM ────────────
+// ── qmsg_encrypt ── ML-KEM session establishment, AES-256-GCM ────────────
 
-circuit polymsg_encrypt_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_encrypt_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_encrypt", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_encrypt", AperturePartition::Backend as u8,
         SLATier::Premium as u8, ResourceBudget8D {
             execution: 300000, hash_ops: 8000, bandwidth: 60000,
             storage: 50000, observe_events: 10000, proofs: 200,
@@ -144,13 +144,13 @@ circuit polymsg_encrypt_module() -> ModuleNode
         })
 }
 
-// ── polymsg_ratchet ── Double ratchet forward secrecy ────────────────────────
+// ── qmsg_ratchet ── Double ratchet forward secrecy ────────────────────────
 
-circuit polymsg_ratchet_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_ratchet_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_ratchet", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_ratchet", AperturePartition::Backend as u8,
         SLATier::Premium as u8, ResourceBudget8D {
             execution: 200000, hash_ops: 10000, bandwidth: 20000,
             storage: 40000, observe_events: 8000, proofs: 150,
@@ -158,13 +158,13 @@ circuit polymsg_ratchet_module() -> ModuleNode
         })
 }
 
-// ── polymsg_relay ── Blind relay routing, cover traffic, onion forwarding ────
+// ── qmsg_relay ── Blind relay routing, cover traffic, onion forwarding ────
 
-circuit polymsg_relay_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_relay_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_relay", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_relay", AperturePartition::Backend as u8,
         SLATier::Premium as u8, ResourceBudget8D {
             execution: 250000, hash_ops: 5000, bandwidth: 100000,
             storage: 30000, observe_events: 12000, proofs: 100,
@@ -172,13 +172,13 @@ circuit polymsg_relay_module() -> ModuleNode
         })
 }
 
-// ── polymsg_classify ── Message classification and content policy ────────────
+// ── qmsg_classify ── Message classification and content policy ────────────
 
-circuit polymsg_classify_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_classify_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_classify", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_classify", AperturePartition::Backend as u8,
         SLATier::Standard as u8, ResourceBudget8D {
             execution: 100000, hash_ops: 2000, bandwidth: 20000,
             storage: 20000, observe_events: 5000, proofs: 50,
@@ -186,13 +186,13 @@ circuit polymsg_classify_module() -> ModuleNode
         })
 }
 
-// ── polymsg_incognito ── Ephemeral identity and session unlinkability ────────
+// ── qmsg_incognito ── Ephemeral identity and session unlinkability ────────
 
-circuit polymsg_incognito_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_incognito_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_incognito", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_incognito", AperturePartition::Backend as u8,
         SLATier::Premium as u8, ResourceBudget8D {
             execution: 150000, hash_ops: 6000, bandwidth: 15000,
             storage: 10000, observe_events: 4000, proofs: 100,
@@ -200,13 +200,13 @@ circuit polymsg_incognito_module() -> ModuleNode
         })
 }
 
-// ── polymsg_metering ── Per-operation metering with tier enforcement ─────────
+// ── qmsg_metering ── Per-operation metering with tier enforcement ─────────
 
-circuit polymsg_metering_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_metering_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_metering", AperturePartition::Shared as u8,
+    make_qmsg_module("qmsg_metering", AperturePartition::Shared as u8,
         SLATier::Standard as u8, ResourceBudget8D {
             execution: 80000, hash_ops: 1000, bandwidth: 10000,
             storage: 30000, observe_events: 6000, proofs: 30,
@@ -214,13 +214,13 @@ circuit polymsg_metering_module() -> ModuleNode
         })
 }
 
-// ── polymsg_platform_health ── Health checks, anomaly detection ─────────────
+// ── qmsg_platform_health ── Health checks, anomaly detection ─────────────
 
-circuit polymsg_platform_health_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_platform_health_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_platform_health", AperturePartition::Shared as u8,
+    make_qmsg_module("qmsg_platform_health", AperturePartition::Shared as u8,
         SLATier::Standard as u8, ResourceBudget8D {
             execution: 60000, hash_ops: 500, bandwidth: 8000,
             storage: 15000, observe_events: 8000, proofs: 20,
@@ -228,13 +228,13 @@ circuit polymsg_platform_health_module() -> ModuleNode
         })
 }
 
-// ── polymsg_rbac ── Role-based access control for groups and channels ────────
+// ── qmsg_rbac ── Role-based access control for groups and channels ────────
 
-circuit polymsg_rbac_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_rbac_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_rbac", AperturePartition::Shared as u8,
+    make_qmsg_module("qmsg_rbac", AperturePartition::Shared as u8,
         SLATier::Standard as u8, ResourceBudget8D {
             execution: 80000, hash_ops: 1000, bandwidth: 10000,
             storage: 20000, observe_events: 3000, proofs: 40,
@@ -242,13 +242,13 @@ circuit polymsg_rbac_module() -> ModuleNode
         })
 }
 
-// ── polymsg_contact_graph ── Contact network graph ──────────────────────────
+// ── qmsg_contact_graph ── Contact network graph ──────────────────────────
 
-circuit polymsg_contact_graph_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_contact_graph_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_contact_graph", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_contact_graph", AperturePartition::Backend as u8,
         SLATier::Standard as u8, ResourceBudget8D {
             execution: 120000, hash_ops: 3000, bandwidth: 25000,
             storage: 80000, observe_events: 6000, proofs: 60,
@@ -256,13 +256,13 @@ circuit polymsg_contact_graph_module() -> ModuleNode
         })
 }
 
-// ── polymsg_conversation_dag ── Message ordering DAG ────────────────────────
+// ── qmsg_conversation_dag ── Message ordering DAG ────────────────────────
 
-circuit polymsg_conversation_dag_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_conversation_dag_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_conversation_dag", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_conversation_dag", AperturePartition::Backend as u8,
         SLATier::Standard as u8, ResourceBudget8D {
             execution: 150000, hash_ops: 4000, bandwidth: 30000,
             storage: 100000, observe_events: 8000, proofs: 80,
@@ -270,13 +270,13 @@ circuit polymsg_conversation_dag_module() -> ModuleNode
         })
 }
 
-// ── polymsg_relay_graph ── Blind relay topology graph ───────────────────────
+// ── qmsg_relay_graph ── Blind relay topology graph ───────────────────────
 
-circuit polymsg_relay_graph_module() -> ModuleNode
-    lex polylabs/polymessenger  @status production  @precision B
+circuit qmsg_relay_graph_module() -> ModuleNode
+    lex polyqlabs/qmessenger  @status production  @precision B
     observe metrics: [module_init]  meters [compute_cycles]
 {
-    make_polymsg_module("polymsg_relay_graph", AperturePartition::Backend as u8,
+    make_qmsg_module("qmsg_relay_graph", AperturePartition::Backend as u8,
         SLATier::Premium as u8, ResourceBudget8D {
             execution: 180000, hash_ops: 3000, bandwidth: 40000,
             storage: 60000, observe_events: 10000, proofs: 80,
@@ -290,10 +290,10 @@ circuit polymsg_relay_graph_module() -> ModuleNode
 
 /// Register all 11 PolyMessenger modules and their intra-graph REQUIRES
 /// dependency edges into the provided CsrStorage graph.
-circuit polymessenger_app_graph_register(
+circuit qmessenger_app_graph_register(
     graph: CsrStorage
 ) -> CsrStorage
-    lex polylabs/polymessenger
+    lex polyqlabs/qmessenger
     @status production
     @precision B
     @attested true
@@ -302,81 +302,81 @@ circuit polymessenger_app_graph_register(
     meters [compute_cycles, memory_bytes]
 {
     // ── Add all 11 modules ──────────────────────────────────────────────────
-    let (g, id_encrypt)          = module_graph_add_module(graph, polymsg_encrypt_module())
-    let (g, id_ratchet)          = module_graph_add_module(g, polymsg_ratchet_module())
-    let (g, id_relay)            = module_graph_add_module(g, polymsg_relay_module())
-    let (g, id_classify)         = module_graph_add_module(g, polymsg_classify_module())
-    let (g, id_incognito)        = module_graph_add_module(g, polymsg_incognito_module())
-    let (g, id_metering)         = module_graph_add_module(g, polymsg_metering_module())
-    let (g, id_platform_health)  = module_graph_add_module(g, polymsg_platform_health_module())
-    let (g, id_rbac)             = module_graph_add_module(g, polymsg_rbac_module())
-    let (g, id_contact_graph)    = module_graph_add_module(g, polymsg_contact_graph_module())
-    let (g, id_conversation_dag) = module_graph_add_module(g, polymsg_conversation_dag_module())
-    let (g, id_relay_graph)      = module_graph_add_module(g, polymsg_relay_graph_module())
+    let (g, id_encrypt)          = module_graph_add_module(graph, qmsg_encrypt_module())
+    let (g, id_ratchet)          = module_graph_add_module(g, qmsg_ratchet_module())
+    let (g, id_relay)            = module_graph_add_module(g, qmsg_relay_module())
+    let (g, id_classify)         = module_graph_add_module(g, qmsg_classify_module())
+    let (g, id_incognito)        = module_graph_add_module(g, qmsg_incognito_module())
+    let (g, id_metering)         = module_graph_add_module(g, qmsg_metering_module())
+    let (g, id_platform_health)  = module_graph_add_module(g, qmsg_platform_health_module())
+    let (g, id_rbac)             = module_graph_add_module(g, qmsg_rbac_module())
+    let (g, id_contact_graph)    = module_graph_add_module(g, qmsg_contact_graph_module())
+    let (g, id_conversation_dag) = module_graph_add_module(g, qmsg_conversation_dag_module())
+    let (g, id_relay_graph)      = module_graph_add_module(g, qmsg_relay_graph_module())
 
     let vc = ">=" ++ POLYMSG_VERSION_STR
 
     // ── Intra-graph REQUIRES edges ──────────────────────────────────────────
     // encrypt -> ratchet (session key derivation)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_encrypt",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_ratchet",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_encrypt",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_ratchet",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_encrypt, id_ratchet)
 
     // relay -> relay_graph (route selection)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_relay",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_relay_graph",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_relay",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_relay_graph",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_relay, id_relay_graph)
 
     // relay -> encrypt (onion layer encryption)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_relay",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_encrypt",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_relay",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_encrypt",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_relay, id_encrypt)
 
     // classify -> rbac (content policy enforcement)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_classify",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_rbac",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_classify",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_rbac",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_classify, id_rbac)
 
     // incognito -> encrypt (ephemeral session establishment)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_incognito",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_encrypt",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_incognito",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_encrypt",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_incognito, id_encrypt)
 
     // contact_graph -> rbac (trust and blocking enforcement)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_contact_graph",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_rbac",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_contact_graph",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_rbac",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_contact_graph, id_rbac)
 
     // conversation_dag -> encrypt (message ordering with encryption)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_conversation_dag",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_encrypt",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_conversation_dag",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_encrypt",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_conversation_dag, id_encrypt)
 
     // metering -> relay (relay hop accounting)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_metering",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_relay",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_metering",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_relay",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_metering, id_relay)
 
     // platform_health -> relay_graph (relay health overlay reads)
     let g = module_graph_add_edge(g, ModuleEdge {
-        edge_type: EDGE_REQUIRES, source_module: "polymsg_platform_health",
-        source_version: POLYMSG_VERSION_STR, target_module: "polymsg_relay_graph",
+        edge_type: EDGE_REQUIRES, source_module: "qmsg_platform_health",
+        source_version: POLYMSG_VERSION_STR, target_module: "qmsg_relay_graph",
         target_version_constraint: vc, metadata: bytes(0),
     }, id_platform_health, id_relay_graph)
 
@@ -384,34 +384,34 @@ circuit polymessenger_app_graph_register(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Cross-Graph Bridge Edges — PolyKit
+// Cross-Graph Bridge Edges — QKit
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Register EDGE_BRIDGE_TO edges linking PolyMessenger's relay module to
-/// PolyKit blind_relay and encrypt module to PolyKit media_stream.
-circuit polymessenger_register_bridge_edges(
+/// QKit blind_relay and encrypt module to QKit media_stream.
+circuit qmessenger_register_bridge_edges(
     graph: CsrStorage
 ) -> CsrStorage
-    lex polylabs/polymessenger
+    lex polyqlabs/qmessenger
     @status production
     @precision B
     @attested true
     observe metrics: [bridge_count]
     meters [compute_cycles]
 {
-    let relay_id = find_poly_module_id(graph, "polymsg_relay")
-    let encrypt_id = find_poly_module_id(graph, "polymsg_encrypt")
+    let relay_id = find_poly_module_id(graph, "qmsg_relay")
+    let encrypt_id = find_poly_module_id(graph, "qmsg_encrypt")
 
     let g = graph
 
-    // polymsg_relay -> PolyKit blind_relay bridge
+    // qmsg_relay -> QKit blind_relay bridge
     if relay_id != 0xFFFFFFFF as u32 {
         let relay_bridge = InterAppEdge {
             edge_type: EDGE_BRIDGE_TO,
             source_lex: POLYMSG_APP_LEX,
-            source_module: "polymsg_relay",
-            target_lex: "polylabs/polykit",
-            target_module: "polykit_blind_relay",
+            source_module: "qmsg_relay",
+            target_lex: "polyqlabs/qkit",
+            target_module: "qkit_blind_relay",
             bridge_scope: BridgeScope::Platform as u8,
             shared_fields: ["relay_config", "route_policy", "cover_traffic_config"],
             redacted_fields: [],
@@ -420,14 +420,14 @@ circuit polymessenger_register_bridge_edges(
         g = module_graph_add_bridge_edge(g, relay_bridge, relay_id)
     }
 
-    // polymsg_encrypt -> PolyKit media_stream bridge
+    // qmsg_encrypt -> QKit media_stream bridge
     if encrypt_id != 0xFFFFFFFF as u32 {
         let media_bridge = InterAppEdge {
             edge_type: EDGE_BRIDGE_TO,
             source_lex: POLYMSG_APP_LEX,
-            source_module: "polymsg_encrypt",
-            target_lex: "polylabs/polykit",
-            target_module: "polykit_media_stream",
+            source_module: "qmsg_encrypt",
+            target_lex: "polyqlabs/qkit",
+            target_module: "qkit_media_stream",
             bridge_scope: BridgeScope::Platform as u8,
             shared_fields: ["stream_config", "codec_policy", "bandwidth_allocation"],
             redacted_fields: [],
@@ -443,8 +443,8 @@ circuit polymessenger_register_bridge_edges(
 // Internal Helpers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-circuit find_polymsg_module_id(graph: CsrStorage, name: string) -> u32
-    lex polylabs/polymessenger
+circuit find_qmsg_module_id(graph: CsrStorage, name: string) -> u32
+    lex polyqlabs/qmessenger
     @status production
     @precision D
 {
@@ -453,8 +453,8 @@ circuit find_polymsg_module_id(graph: CsrStorage, name: string) -> u32
 
 // ── Metrics Store ──────────────────────────────────────────────────────────────
 
-store series polymsg_app_graph_metrics
-    lex polylabs/polymessenger/metrics
+store series qmsg_app_graph_metrics
+    lex polyqlabs/qmessenger/metrics
 {
     operation: string key
     product_name: string
@@ -466,45 +466,45 @@ store series polymsg_app_graph_metrics
 
 // ── Golden Tests ───────────────────────────────────────────────────────────────
 
-test golden "polymsg_app_graph_registers_11_modules" {
+test golden "qmsg_app_graph_registers_11_modules" {
     exec {
         let g = graph_create()
-        let g = polymessenger_app_graph_register(g)
+        let g = qmessenger_app_graph_register(g)
     }
     assert {
         g.num_nodes == 11
         g.num_edges == 9
-        find_poly_module_id(g, "polymsg_encrypt") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_ratchet") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_relay") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_classify") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_incognito") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_metering") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_platform_health") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_rbac") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_contact_graph") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_conversation_dag") != 0xFFFFFFFF
-        find_poly_module_id(g, "polymsg_relay_graph") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_encrypt") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_ratchet") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_relay") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_classify") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_incognito") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_metering") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_platform_health") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_rbac") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_contact_graph") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_conversation_dag") != 0xFFFFFFFF
+        find_poly_module_id(g, "qmsg_relay_graph") != 0xFFFFFFFF
     }
 }
 
-test golden "polymsg_bridge_edges_connect_polykit" {
+test golden "qmsg_bridge_edges_connect_qkit" {
     exec {
         let g = graph_create()
-        let g = polymessenger_app_graph_register(g)
-        let g = polymessenger_register_bridge_edges(g)
+        let g = qmessenger_app_graph_register(g)
+        let g = qmessenger_register_bridge_edges(g)
     }
     assert {
         g.num_nodes == 11 + 2
-        let relay_id = find_poly_module_id(g, "polymsg_relay")
+        let relay_id = find_poly_module_id(g, "qmsg_relay")
         relay_id != 0xFFFFFFFF
-        let encrypt_id = find_poly_module_id(g, "polymsg_encrypt")
+        let encrypt_id = find_poly_module_id(g, "qmsg_encrypt")
         encrypt_id != 0xFFFFFFFF
     }
 }
 
-test golden "make_polymsg_module_creates_valid_node" {
-    let node = make_polymsg_module("polymsg_test",
+test golden "make_qmsg_module_creates_valid_node" {
+    let node = make_qmsg_module("qmsg_test",
         AperturePartition::Backend as u8,
         SLATier::Standard as u8,
         ResourceBudget8D {
@@ -512,7 +512,7 @@ test golden "make_polymsg_module_creates_valid_node" {
             storage: 1000, observe_events: 100, proofs: 10,
             consensus: 5, memory: 4096,
         })
-    assert node.name == "polymsg_test"
+    assert node.name == "qmsg_test"
     assert node.version_major == POLYMSG_VERSION_MAJOR
     assert node.version_minor == POLYMSG_VERSION_MINOR
     assert node.resource_budget.execution == 5000

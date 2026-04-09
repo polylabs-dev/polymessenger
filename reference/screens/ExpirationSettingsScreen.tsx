@@ -3,7 +3,7 @@
  * 
  * Settings screen for configuring message expiration at app level.
  * 
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  * @issue #104
  */
 

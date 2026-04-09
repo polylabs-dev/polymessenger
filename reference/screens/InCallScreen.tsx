@@ -3,7 +3,7 @@
  *
  * Active call display with controls for voice and video calls.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useState, useEffect, useCallback } from 'react';

@@ -58,8 +58,8 @@ export function NewMessageScreen({ contacts, onSelectContact, onCreateGroup, onA
   const handleInvite = useCallback(async () => {
     try {
       await Share.share({
-        message: `Join me on Poly Messenger! Download and add me: poly://invite/YOUR_KEY_HASH\n\n🔐 Quantum-secure messaging powered by eStream`,
-        title: 'Invite to Poly Messenger',
+        message: `Join me on Q Messenger! Download and add me: poly://invite/YOUR_KEY_HASH\n\n🔐 Quantum-secure messaging powered by eStream`,
+        title: 'Invite to Q Messenger',
       });
     } catch (error) {
       console.error('Share failed:', error);

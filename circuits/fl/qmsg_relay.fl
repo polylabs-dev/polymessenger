@@ -1,18 +1,18 @@
-// Poly Messenger Relay — Blind relay routing with cover traffic (v0.11.0)
+// Q Messenger Relay — Blind relay routing with cover traffic (v0.11.0)
 //
 // Lex Architecture:
-//   esn/global/org/polylabs/messenger/relay
+//   esn/global/org/polyqlabs/messenger/relay
 //   No relay node sees both sender and recipient.
 //   Multi-hop onion encryption: each hop peels one layer.
 //   Cover traffic makes real messages indistinguishable from noise.
 //
 // Routing:
-//   Client selects k relays from relay_mesh graph (see polymsg_relay_graph.fl).
+//   Client selects k relays from relay_mesh graph (see qmsg_relay_graph.fl).
 //   Each hop is wrapped in ML-KEM-1024 onion layer.
 //   Packet size is constant (padded to 4096 bytes) to prevent traffic analysis.
 
-import polykit_blind_relay from "../../polykit/circuits/fl/apps/polykit_blind_relay.fl"
-import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_blind_relay from "../../qkit/circuits/fl/apps/qkit_blind_relay.fl"
+import qkit_metering from "../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Type Aliases ─────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ data RelayPacket : messenger v1 {
     timestamp_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex esn/global/org/polyqlabs/messenger/relay
     cortex {
         redact [onion_layers, packet_id]
         infer on_write
@@ -45,7 +45,7 @@ data RelayRoute : messenger v1 {
     expires_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex esn/global/org/polyqlabs/messenger/relay
     cortex {
         redact [hops, hop_pubkeys]
         infer on_write
@@ -59,7 +59,7 @@ data CoverTrafficConfig : messenger v1 {
     mimicry_profile: u8,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex esn/global/org/polyqlabs/messenger/relay
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -72,7 +72,7 @@ data RouteResult : messenger v1 {
     latency_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex esn/global/org/polyqlabs/messenger/relay
     cortex {
         redact [route_id]
         infer on_write
@@ -98,7 +98,7 @@ circuit route_message(
     sender_id: bytes(16),
 ) -> RouteResult
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     blind relay
     constant_time true
@@ -156,7 +156,7 @@ circuit select_relays(
     security_tier: u8,
 ) -> RelayRoute
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     blind relay
     meters [compute_cycles]
@@ -197,7 +197,7 @@ circuit select_relays(
 @guard(block_on: config_invalid)
 circuit generate_cover_traffic(config: CoverTrafficConfig, session_id: bytes(32)) -> RelayPacket
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     blind full
     constant_time true
@@ -234,7 +234,7 @@ circuit strip_relay_layer(
     relay_id: RelayId,
 ) -> (RelayPacket, RelayId)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/relay
+    lex esn/global/org/polyqlabs/messenger/relay
     precision C
     blind relay
     constant_time true

@@ -1,17 +1,17 @@
-/// Poly Messenger Platform Health — Blind relay pattern health monitoring (v0.11.0)
+/// Q Messenger Platform Health — Blind relay pattern health monitoring (v0.11.0)
 ///
 /// Aggregates messaging-relay metrics through blinded, cohort-enforced telemetry.
-/// Stratum: kv store + lex governance under esn/global/org/polylabs/messenger.
+/// Stratum: kv store + lex governance under esn/global/org/polyqlabs/messenger.
 /// Cortex: obfuscation, write-time inference, anomaly alerting to messenger-team.
 ///
 /// Zero-linkage: HKDF("poly-messenger-telemetry-v1") isolates all identity.
 /// No message content, sender/recipient pairs, or session keys ever reach StreamSight.
 /// All relays must execute in constant time to prevent timing side-channels.
 ///
-/// govern lex esn/global/org/polylabs/messenger
+/// govern lex esn/global/org/polyqlabs/messenger
 
-import polykit_blind_telemetry from "../../polykit/circuits/fl/polykit_blind_telemetry.fl"
-import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_blind_telemetry from "../../qkit/circuits/fl/qkit_blind_telemetry.fl"
+import qkit_metering from "../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Data Declarations with Stratum + Cortex ─────────────────────────
 
@@ -33,7 +33,7 @@ data PlatformMetrics : messenger v1 {
     collected_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger
+    govern lex esn/global/org/polyqlabs/messenger
     cortex {
         obfuscate [blinded_user_id, anomaly_score, relay_latency_avg_ms]
         infer on_write
@@ -82,7 +82,7 @@ circuit messenger_platform_health(
     relay_timing_variance_ns: u64,
 ) -> PlatformMetrics
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger {
+    lex esn/global/org/polyqlabs/messenger {
         governance hierarchical
         audit_trail true
         sub_lex session fan_in
@@ -123,9 +123,9 @@ circuit messenger_platform_health(
 {
     let ts = now_ns() / 1000000
 
-    let blinded = polykit_blind_telemetry::blind_user_id(spark_id, "poly-messenger-telemetry-v1")
+    let blinded = qkit_blind_telemetry::blind_user_id(spark_id, "poly-messenger-telemetry-v1")
 
-    let (cohort_status, cohort_ok) = polykit_blind_telemetry::enforce_cohort(active_user_count, 50)
+    let (cohort_status, cohort_ok) = qkit_blind_telemetry::enforce_cohort(active_user_count, 50)
 
     let relay_baseline = streamsight_baseline("messages_relayed", 3600000)
     let current_deviation = if relay_baseline > 0 {
@@ -204,7 +204,7 @@ circuit messenger_anomaly_check(
     window_ms: u64,
 ) -> (HealthStatus, f64, string)
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger {
+    lex esn/global/org/polyqlabs/messenger {
         governance hierarchical
         audit_trail true
     }

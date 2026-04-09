@@ -4,7 +4,7 @@
  * Signal-style "Safety Numbers" adaptation for PQ keys.
  * Uses Spark Liveness for visual verification (never static QR).
  * 
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useState, useCallback } from 'react';
@@ -141,7 +141,7 @@ export function KeyVerificationScreen({
             walletId={ourKeyHash}
             displayMode="compact"
             size={168}
-            actionType="app.polymessenger/contact.verify"
+            actionType="app.qmessenger/contact.verify"
           />
           <Text style={styles.sparkLabel}>Your verification Spark</Text>
           <Text style={styles.sparkHelp}>

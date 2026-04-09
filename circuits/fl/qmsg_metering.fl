@@ -1,9 +1,9 @@
-// Poly Messenger Metering — per-operation metering with tier enforcement (v0.12.0)
+// Q Messenger Metering — per-operation metering with tier enforcement (v0.12.0)
 //
 // Lex Architecture:
-//   esn/global/org/polylabs/messenger/metering
+//   esn/global/org/polyqlabs/messenger/metering
 //   Isolated from all other Poly product metering (zero-linkage).
-//   Maps each messenger operation to the PolyKit 8-dimension model.
+//   Maps each messenger operation to the QKit 8-dimension model.
 //
 // Dimension mapping:
 //   send  → [B(andwidth), O(bservables), E(xecutions)]
@@ -11,7 +11,7 @@
 //   call  → [B(andwidth), E(xecutions), H(ashes)]
 //   relay → [B(andwidth), H(ashes)]
 
-import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_metering from "../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Enums (preserved) ───────────────────────────────────────────
 
@@ -34,7 +34,7 @@ data MessengerUsage : messenger v1 {
     period_start_ms: u64,
 }
     store kv
-    govern lex global/org/polylabs/messenger/metering
+    govern lex global/org/polyqlabs/messenger/metering
     cortex {
         redact [user_id]
         infer on_write
@@ -49,7 +49,7 @@ data MessengerQuota : messenger v1 {
     max_bandwidth_bytes: u64,
 }
     store kv
-    govern lex global/org/polylabs/messenger/metering
+    govern lex global/org/polyqlabs/messenger/metering
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -62,7 +62,7 @@ data QuotaCheckResult : messenger v1 {
     reset_at_ms: u64,
 }
     store kv
-    govern lex global/org/polylabs/messenger/metering
+    govern lex global/org/polyqlabs/messenger/metering
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -70,19 +70,19 @@ data QuotaCheckResult : messenger v1 {
 
 // ── Streams ─────────────────────────────────────────────────────
 
-stream metering_events: event<polykit_metering.MeteringRecord>
+stream metering_events: event<qkit_metering.MeteringRecord>
     | throttle 2000/s burst 5000
 
-stream messenger_events: event<polykit_metering.MeteringRecord>
+stream messenger_events: event<qkit_metering.MeteringRecord>
     retention 90d
     consumers [observe, audit_trail]
 
 // ── Circuits ────────────────────────────────────────────────────
 
 /// Meter a send operation: [B, O, E]
-circuit meter_send(user_id: bytes(16), message_size: u64) -> polykit_metering.MeteringRecord
+circuit meter_send(user_id: bytes(16), message_size: u64) -> qkit_metering.MeteringRecord
     profile poly_framework_standard
-    lex global/org/polylabs/messenger/metering
+    lex global/org/polyqlabs/messenger/metering
     @precision C
     meters [compute_cycles, bandwidth_bytes]
     @observe metrics: [sends_metered, send_bytes_metered]
@@ -91,7 +91,7 @@ circuit meter_send(user_id: bytes(16), message_size: u64) -> polykit_metering.Me
     property safety "metering_isolation" { user_id not correlated with other products }
     wasm_abi [eslite_insert, stream_emit, now]
 {
-    let dims = polykit_metering.DimensionValues {
+    let dims = qkit_metering.DimensionValues {
         executions: 1,
         hashes: 0,
         bandwidth: message_size,
@@ -101,13 +101,13 @@ circuit meter_send(user_id: bytes(16), message_size: u64) -> polykit_metering.Me
         circuits: 0,
         mpc_sessions: 0,
     }
-    polykit_metering.record_usage(user_id, "messenger.send", dims)
+    qkit_metering.record_usage(user_id, "messenger.send", dims)
 }
 
 /// Meter a receive operation: [B, O]
-circuit meter_receive(user_id: bytes(16), message_size: u64) -> polykit_metering.MeteringRecord
+circuit meter_receive(user_id: bytes(16), message_size: u64) -> qkit_metering.MeteringRecord
     profile poly_framework_standard
-    lex global/org/polylabs/messenger/metering
+    lex global/org/polyqlabs/messenger/metering
     @precision C
     meters [compute_cycles, bandwidth_bytes]
     @observe metrics: [receives_metered, receive_bytes_metered]
@@ -115,7 +115,7 @@ circuit meter_receive(user_id: bytes(16), message_size: u64) -> polykit_metering
     property safety "metering_isolation" { user_id not correlated with other products }
     wasm_abi [eslite_insert, stream_emit, now]
 {
-    let dims = polykit_metering.DimensionValues {
+    let dims = qkit_metering.DimensionValues {
         executions: 0,
         hashes: 0,
         bandwidth: message_size,
@@ -125,13 +125,13 @@ circuit meter_receive(user_id: bytes(16), message_size: u64) -> polykit_metering
         circuits: 0,
         mpc_sessions: 0,
     }
-    polykit_metering.record_usage(user_id, "messenger.receive", dims)
+    qkit_metering.record_usage(user_id, "messenger.receive", dims)
 }
 
 /// Meter a call operation: [B, E, H]
-circuit meter_call(user_id: bytes(16), duration_ms: u64, bandwidth_used: u64) -> polykit_metering.MeteringRecord
+circuit meter_call(user_id: bytes(16), duration_ms: u64, bandwidth_used: u64) -> qkit_metering.MeteringRecord
     profile poly_framework_standard
-    lex global/org/polylabs/messenger/metering
+    lex global/org/polyqlabs/messenger/metering
     @precision C
     meters [compute_cycles, bandwidth_bytes]
     @observe metrics: [calls_metered, call_duration_ms, call_bandwidth_bytes]
@@ -141,7 +141,7 @@ circuit meter_call(user_id: bytes(16), duration_ms: u64, bandwidth_used: u64) ->
     wasm_abi [eslite_insert, stream_emit, now]
 {
     let hash_ops = duration_ms / 100
-    let dims = polykit_metering.DimensionValues {
+    let dims = qkit_metering.DimensionValues {
         executions: 1,
         hashes: hash_ops,
         bandwidth: bandwidth_used,
@@ -151,13 +151,13 @@ circuit meter_call(user_id: bytes(16), duration_ms: u64, bandwidth_used: u64) ->
         circuits: 0,
         mpc_sessions: 0,
     }
-    polykit_metering.record_usage(user_id, "messenger.call", dims)
+    qkit_metering.record_usage(user_id, "messenger.call", dims)
 }
 
 /// Meter a relay operation: [B, H]
-circuit meter_relay(user_id: bytes(16), packet_size: u64, hop_count: u64) -> polykit_metering.MeteringRecord
+circuit meter_relay(user_id: bytes(16), packet_size: u64, hop_count: u64) -> qkit_metering.MeteringRecord
     profile poly_framework_standard
-    lex global/org/polylabs/messenger/metering
+    lex global/org/polyqlabs/messenger/metering
     @precision C
     meters [compute_cycles, bandwidth_bytes]
     @observe metrics: [relays_metered, relay_hops_metered]
@@ -167,7 +167,7 @@ circuit meter_relay(user_id: bytes(16), packet_size: u64, hop_count: u64) -> pol
 {
     let total_bandwidth = packet_size * hop_count
     let hash_ops = hop_count * 2
-    let dims = polykit_metering.DimensionValues {
+    let dims = qkit_metering.DimensionValues {
         executions: 0,
         hashes: hash_ops,
         bandwidth: total_bandwidth,
@@ -177,13 +177,13 @@ circuit meter_relay(user_id: bytes(16), packet_size: u64, hop_count: u64) -> pol
         circuits: 0,
         mpc_sessions: 0,
     }
-    polykit_metering.record_usage(user_id, "messenger.relay", dims)
+    qkit_metering.record_usage(user_id, "messenger.relay", dims)
 }
 
 /// Check if an operation is within the user's tier quota
 circuit check_quota(user_id: bytes(16), operation: MessengerOperation, quota: MessengerQuota) -> QuotaCheckResult
     profile poly_framework_standard
-    lex global/org/polylabs/messenger/metering
+    lex global/org/polyqlabs/messenger/metering
     @precision C
     meters [compute_cycles]
     @observe metrics: [quota_checks, quota_exceeded, quota_remaining_pct]
@@ -222,7 +222,7 @@ circuit check_quota(user_id: bytes(16), operation: MessengerOperation, quota: Me
 /// Get accumulated usage for a messenger user
 circuit get_usage(user_id: bytes(16)) -> MessengerUsage
     profile poly_framework_standard
-    lex global/org/polylabs/messenger/metering
+    lex global/org/polyqlabs/messenger/metering
     @precision C
     @observe metrics: [usage_queries]
     invariant "user_exists" { load(user_id) != null or default_usage }

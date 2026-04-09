@@ -3,7 +3,7 @@
  *
  * Display while waiting for call to be answered.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useEffect, useState } from 'react';

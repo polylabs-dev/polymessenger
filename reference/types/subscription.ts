@@ -1,5 +1,5 @@
 /**
- * Subscription Types for Poly Messenger
+ * Subscription Types for Q Messenger
  * 
  * Defines the freemium pricing model with tier-based features.
  */

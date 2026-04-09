@@ -3,7 +3,7 @@
  * 
  * In-person contact verification via Spark scanning.
  * 
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useState, useCallback } from 'react';
@@ -165,7 +165,7 @@ export function SparkVerifyScreen({
               walletId="verification"
               displayMode="full"
               size={280}
-              actionType="app.polymessenger/contact.verify"
+              actionType="app.qmessenger/contact.verify"
               autoRefresh={true}
             />
           </View>
@@ -183,7 +183,7 @@ export function SparkVerifyScreen({
           <View style={styles.steps}>
             <View style={styles.step}>
               <Text style={styles.stepNumber}>1</Text>
-              <Text style={styles.stepText}>They open Poly Messenger</Text>
+              <Text style={styles.stepText}>They open Q Messenger</Text>
             </View>
             <View style={styles.step}>
               <Text style={styles.stepNumber}>2</Text>

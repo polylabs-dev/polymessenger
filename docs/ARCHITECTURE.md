@@ -1,28 +1,28 @@
-# Poly Messenger Architecture
+# Q Messenger Architecture
 
 **Version**: 3.0
 **Date**: February 2026
 **Platform**: eStream v0.8.3
-**Upstream**: PolyKit v0.3.0, eStream graph/DAG constructs
+**Upstream**: QKit v0.3.0, eStream graph/DAG constructs
 **Build Pipeline**: FastLang (.fl) → FLIR → Rust/WASM codegen → .escd
 
 ---
 
 ## Overview
 
-Poly Messenger is a post-quantum encrypted real-time messaging platform with blind relay, lattice amplification, and scatter-distributed storage. All cryptographic operations run in WASM (Rust). TypeScript is a DOM binding layer only.
+Q Messenger is a post-quantum encrypted real-time messaging platform with blind relay, lattice amplification, and scatter-distributed storage. All cryptographic operations run in WASM (Rust). TypeScript is a DOM binding layer only.
 
-This repo is a fresh build on the PolyKit + eStream graph/DAG architecture. Screen designs, hooks, and types are extracted from the original `polyquantum/polymessenger-app` (in `reference/`) as a starting point.
+This repo is a fresh build on the QKit + eStream graph/DAG architecture. Screen designs, hooks, and types are extracted from the original `polyquantum/qmessenger-app` (in `reference/`) as a starting point.
 
 ---
 
 ## Zero-Linkage Privacy
 
-- **HKDF context**: `poly-messenger-v1` — independent from all other Poly products
-- **Lex namespace**: `esn/global/org/polylabs/messenger`
-- **user_id**: Derived from Poly Messenger-specific ML-DSA-87 public key. Cannot be linked to Poly Data, Poly Mail, or any other product identity.
-- **StreamSight**: `polylabs.messenger.*` — no cross-product telemetry
-- **Metering**: Own `metering_graph` instance under `polylabs.messenger.metering`
+- **HKDF context**: `q-messenger-v1` — independent from all other Q products
+- **Lex namespace**: `esn/global/org/polyqlabs/messenger`
+- **user_id**: Derived from Q Messenger-specific ML-DSA-87 public key. Cannot be linked to Poly Data, Q Mail, or any other product identity.
+- **StreamSight**: `polyqlabs.messenger.*` — no cross-product telemetry
+- **Metering**: Own `metering_graph` instance under `polyqlabs.messenger.metering`
 
 ---
 
@@ -30,7 +30,7 @@ This repo is a fresh build on the PolyKit + eStream graph/DAG architecture. Scre
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      Poly Messenger Client                           │
+│                      Q Messenger Client                           │
 │                                                                       │
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │  React Native UI (from reference/screens/)                      │  │
@@ -48,14 +48,14 @@ This repo is a fresh build on the PolyKit + eStream graph/DAG architecture. Scre
 │  │  graph contact_network   — contacts, groups, trust              │  │
 │  │  dag message_thread      — message ordering + threading         │  │
 │  │  graph relay_mesh        — blind relay topology                 │  │
-│  │  graph user_graph        — per-product identity (from PolyKit) │  │
-│  │  graph metering_graph    — per-product metering (from PolyKit) │  │
+│  │  graph user_graph        — per-product identity (from QKit) │  │
+│  │  graph metering_graph    — per-product metering (from QKit) │  │
 │  └────────────────────────────┬───────────────────────────────────┘  │
 │                                │                                      │
 │  ┌────────────────────────────┴───────────────────────────────────┐  │
 │  │  FastLang Circuits (WASM via .escd)                              │  │
-│  │  polymsg_encrypt │ polymsg_relay │ polymsg_ratchet              │  │
-│  │  polymsg_metering │ polymsg_classify                            │  │
+│  │  qmsg_encrypt │ qmsg_relay │ qmsg_ratchet              │  │
+│  │  qmsg_metering │ qmsg_classify                            │  │
 │  └────────────────────────────┬───────────────────────────────────┘  │
 │                                │                                      │
 │  ┌────────────────────────────┴───────────────────────────────────┐  │
@@ -69,7 +69,7 @@ This repo is a fresh build on the PolyKit + eStream graph/DAG architecture. Scre
 
 ## Graph/DAG Constructs
 
-### Contact Network (`polymsg_contact_graph.fl`)
+### Contact Network (`qmsg_contact_graph.fl`)
 
 Contacts, groups, and trust relationships form a graph. This replaces flat contact lists with a relational model that supports trust verification, group membership, and blocking.
 
@@ -86,7 +86,7 @@ data ContactNode : app v1 {
     verified_at: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger
+    govern lex esn/global/org/polyqlabs/messenger
     cortex {
         redact [phone_number, email]
         obfuscate [display_name, user_id]
@@ -102,7 +102,7 @@ data GroupNode : app v1 {
     created_at: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger
+    govern lex esn/global/org/polyqlabs/messenger
     cortex {
         obfuscate [creator_id]
         infer on_write
@@ -162,7 +162,7 @@ series contact_series: contact_network
 
 Key circuits: `add_contact`, `verify_contact`, `block_contact`, `create_group`, `join_group`, `leave_group`.
 
-### Message Thread DAG (`polymsg_conversation_dag.fl`)
+### Message Thread DAG (`qmsg_conversation_dag.fl`)
 
 Messages form a DAG within each conversation. Replies create parent edges. This enables threading, ordering, and causal consistency for offline/CRDT scenarios.
 
@@ -179,7 +179,7 @@ data MessageNode : app v1 {
     classification: u8,
 }
     store dag
-    govern lex esn/global/org/polylabs/messenger
+    govern lex esn/global/org/polyqlabs/messenger
     cortex {
         redact [content_hash, content_preview]
         infer on_write
@@ -257,7 +257,7 @@ series message_series: message_thread
 
 Key circuits: `send_message`, `receive_message`, `mark_read`, `add_reaction`, `delete_message`, `expire_messages`.
 
-### Relay Mesh (`polymsg_relay_graph.fl`)
+### Relay Mesh (`qmsg_relay_graph.fl`)
 
 The blind relay network is a graph. Relay nodes and routes are typed with real-time overlays for latency, capacity, and cover traffic. The AI feed selects optimal routes.
 
@@ -274,7 +274,7 @@ data RelayNode : app v1 {
     last_heartbeat: u64,
 }
     store graph
-    govern lex esn/global/org/polylabs/messenger/relay
+    govern lex esn/global/org/polyqlabs/messenger/relay
     cortex {
         redact [endpoint_address]
         obfuscate [jurisdiction]
@@ -328,7 +328,7 @@ Key circuits: `register_relay`, `select_route`, `update_relay_health`, `rotate_r
 
 ## Stratum & Cortex Integration
 
-Poly Messenger's three graph/DAG constructs — `contact_network`, `message_thread`, and `relay_mesh` — compose Stratum storage bindings and Cortex AI governance at the data-declaration level. Every node type declares its storage tier, lex governance path, and Cortex visibility policy inline.
+Q Messenger's three graph/DAG constructs — `contact_network`, `message_thread`, and `relay_mesh` — compose Stratum storage bindings and Cortex AI governance at the data-declaration level. Every node type declares its storage tier, lex governance path, and Cortex visibility policy inline.
 
 ### Stratum Storage Bindings
 
@@ -393,61 +393,61 @@ All graph/DAG data is `.q`-ready. The merkle-CSR message DAG with ML-DSA-87 sign
 | PROFESSIONAL | $19.99 | Unlimited | Yes | (3,7) | Full |
 | ENTERPRISE | Custom | Unlimited | Yes | (5,9)+ | Custom |
 
-Tier enforcement via PolyKit `metering_graph` + `subscription_lifecycle` state machine. Each tier unlocks progressively more relay hops, scatter breadth, and cover traffic.
+Tier enforcement via QKit `metering_graph` + `subscription_lifecycle` state machine. Each tier unlocks progressively more relay hops, scatter breadth, and cover traffic.
 
 ---
 
 ## What Gets Rebuilt vs Extracted
 
-### Extracted from `polyquantum/polymessenger-app` (in `reference/`)
+### Extracted from `polyquantum/qmessenger-app` (in `reference/`)
 
 - 21 screen components (React Native UI designs)
 - 14 hooks (messaging, WebRTC, calls, PRIME, threshold, etc.)
 - 7 type definition files (messaging, prime, threshold, subscription, etc.)
 
-### Rebuilt on PolyKit + Graph
+### Rebuilt on QKit + Graph
 
-- All crypto moves into FastLang circuits composing PolyKit profiles
-- Identity types (`SecurityTier`, `PrimeIdentity`, `DeviceInfo`) use PolyKit `user_graph` instead of standalone structs (~350 lines deleted)
-- Threshold types (`ThresholdConfig`, `Guardian`, `RecoveryRequest`) use PolyKit `user_graph` guardian edges (~340 lines deleted)
-- Metering types (`ResourceDimension`, `MeterReading`) use PolyKit `metering_graph` (~475 lines deleted)
-- Subscription types (`TierLimits`, `TIER_PRICING`) use PolyKit `subscription_lifecycle` (~190 lines deleted)
+- All crypto moves into FastLang circuits composing QKit profiles
+- Identity types (`SecurityTier`, `PrimeIdentity`, `DeviceInfo`) use QKit `user_graph` instead of standalone structs (~350 lines deleted)
+- Threshold types (`ThresholdConfig`, `Guardian`, `RecoveryRequest`) use QKit `user_graph` guardian edges (~340 lines deleted)
+- Metering types (`ResourceDimension`, `MeterReading`) use QKit `metering_graph` (~475 lines deleted)
+- Subscription types (`TierLimits`, `TIER_PRICING`) use QKit `subscription_lifecycle` (~190 lines deleted)
 - Contact management uses `contact_network` graph instead of flat ESLite tables
 - Message storage uses `message_thread` DAG instead of flat arrays
 - Relay selection uses `relay_mesh` graph with `ai_feed` instead of random selection
 
-### Backend Crates (from `polyquantum/polymessenger`)
+### Backend Crates (from `polyquantum/qmessenger`)
 
-- `poly-core` — refactored to import PolyKit types, delete duplicates
+- `q-core` — refactored to import QKit types, delete duplicates
 - `poly-relay` — refactored to operate on `relay_mesh` graph
 - `poly-edge` — edge node deployment (minimal changes)
-- `poly-sdk-backend` — platform SDK for third-party integration → feeds into `@polysdk/messenger`
+- `q-sdk-backend` — platform SDK for third-party integration → feeds into `@polysdk/messenger`
 
 ---
 
 ## Directory Structure
 
 ```
-polymessenger/
+qmessenger/
 ├── reference/
 │   ├── screens/        21 React Native screen components (design reference)
 │   ├── hooks/          14 hooks (functional reference)
-│   └── types/          7 type files (to be replaced by PolyKit graph types)
+│   └── types/          7 type files (to be replaced by QKit graph types)
 ├── circuits/fl/
-│   ├── polymsg_encrypt.fl
-│   ├── polymsg_relay.fl
-│   ├── polymsg_ratchet.fl
-│   ├── polymsg_metering.fl
-│   ├── polymsg_classify.fl
+│   ├── qmsg_encrypt.fl
+│   ├── qmsg_relay.fl
+│   ├── qmsg_ratchet.fl
+│   ├── qmsg_metering.fl
+│   ├── qmsg_classify.fl
 │   └── graphs/
-│       ├── polymsg_contact_graph.fl
-│       ├── polymsg_conversation_dag.fl
-│       └── polymsg_relay_graph.fl
+│       ├── qmsg_contact_graph.fl
+│       ├── qmsg_conversation_dag.fl
+│       └── qmsg_relay_graph.fl
 ├── crates/
-│   ├── poly-core/
+│   ├── q-core/
 │   ├── poly-relay/
 │   ├── poly-edge/
-│   └── poly-sdk-backend/
+│   └── q-sdk-backend/
 ├── packages/
 │   ├── sdk-browser/
 │   ├── sdk-mobile/
@@ -466,7 +466,7 @@ polymessenger/
 - `contact_network` graph + `message_thread` DAG
 - FastLang circuits for encryption, relay, ratchet
 - React Native app with extracted screen designs
-- SPARK auth (`poly-messenger-v1`)
+- SPARK auth (`q-messenger-v1`)
 - Basic blind relay (single hop)
 
 ### Phase 2: Calls & Groups (Q3 2026)

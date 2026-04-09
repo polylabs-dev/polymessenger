@@ -11,7 +11,7 @@ pub struct PolymessengerJourney;
 
 impl Journey for PolymessengerJourney {
     fn name(&self) -> &str {
-        "polymessenger_e2e"
+        "qmessenger_e2e"
     }
 
     fn description(&self) -> &str {
@@ -21,13 +21,13 @@ impl Journey for PolymessengerJourney {
     fn parties(&self) -> Vec<JourneyParty> {
         vec![
             JourneyParty::new("alice")
-                .with_spark_context("poly-messenger-v1")
+                .with_spark_context("q-messenger-v1")
                 .with_role("sender"),
             JourneyParty::new("bob")
-                .with_spark_context("poly-messenger-v1")
+                .with_spark_context("q-messenger-v1")
                 .with_role("recipient"),
             JourneyParty::new("charlie")
-                .with_spark_context("poly-messenger-v1")
+                .with_spark_context("q-messenger-v1")
                 .with_role("observer"),
         ]
     }
@@ -40,7 +40,7 @@ impl Journey for PolymessengerJourney {
                 .action(StepAction::Execute(|ctx: &mut ConvoyContext| {
                     let bob_id = ctx.party_id("bob");
 
-                    let session = ctx.polymessenger().establish_session(
+                    let session = ctx.qmessenger().establish_session(
                         &bob_id,
                         "ml-kem-1024",
                     )?;
@@ -48,7 +48,7 @@ impl Journey for PolymessengerJourney {
                     ctx.set("session_id", &session.id);
                     ctx.set("session_epoch", &session.epoch.to_string());
 
-                    let msg = ctx.polymessenger().send(
+                    let msg = ctx.qmessenger().send(
                         &session.id,
                         "Meeting at 3pm — bring the lattice proofs",
                     )?;
@@ -59,12 +59,12 @@ impl Journey for PolymessengerJourney {
                     assert_eq!(msg.kem_algo, "ml-kem-1024");
                     assert!(msg.ciphertext_len > 0);
 
-                    assert_metric_emitted!(ctx, "polymessenger.message.sent", {
+                    assert_metric_emitted!(ctx, "qmessenger.message.sent", {
                         "kem_algo" => "ml-kem-1024",
                         "encrypted" => "true",
                     });
 
-                    assert_povc_witness!(ctx, "polymessenger.send", {
+                    assert_povc_witness!(ctx, "qmessenger.send", {
                         witness_type: "message_dispatch",
                         session_id: &session.id,
                     });
@@ -80,7 +80,7 @@ impl Journey for PolymessengerJourney {
                 .action(StepAction::Execute(|ctx: &mut ConvoyContext| {
                     let message_id = ctx.get::<String>("message_id");
 
-                    let relay_trace = ctx.polymessenger().trace_relay(&message_id)?;
+                    let relay_trace = ctx.qmessenger().trace_relay(&message_id)?;
 
                     assert!(relay_trace.hop_count >= 3, "Minimum 3 relay hops required");
                     for hop in &relay_trace.hops {
@@ -99,17 +99,17 @@ impl Journey for PolymessengerJourney {
                         );
                     }
 
-                    assert_blinded!(ctx, "polymessenger.relay.routed", {
+                    assert_blinded!(ctx, "qmessenger.relay.routed", {
                         field: "sender_id",
                         blinding: "onion_layer",
                     });
 
-                    assert_blinded!(ctx, "polymessenger.relay.routed", {
+                    assert_blinded!(ctx, "qmessenger.relay.routed", {
                         field: "recipient_id",
                         blinding: "onion_layer",
                     });
 
-                    assert_metric_emitted!(ctx, "polymessenger.relay.routed", {
+                    assert_metric_emitted!(ctx, "qmessenger.relay.routed", {
                         "hop_count" => &relay_trace.hop_count.to_string(),
                         "cover_traffic" => "true",
                     });
@@ -125,22 +125,22 @@ impl Journey for PolymessengerJourney {
                 .action(StepAction::Execute(|ctx: &mut ConvoyContext| {
                     let session_id = ctx.get::<String>("session_id");
 
-                    let inbox = ctx.polymessenger().poll_inbox(&session_id)?;
+                    let inbox = ctx.qmessenger().poll_inbox(&session_id)?;
                     assert!(!inbox.messages.is_empty());
 
                     let msg = &inbox.messages[0];
-                    let decrypted = ctx.polymessenger().decrypt(msg)?;
+                    let decrypted = ctx.qmessenger().decrypt(msg)?;
 
                     assert_eq!(decrypted.plaintext, "Meeting at 3pm — bring the lattice proofs");
                     assert!(decrypted.signature_valid);
                     assert_eq!(decrypted.kem_algo, "ml-kem-1024");
 
-                    assert_metric_emitted!(ctx, "polymessenger.message.received", {
+                    assert_metric_emitted!(ctx, "qmessenger.message.received", {
                         "decrypted" => "true",
                         "signature_valid" => "true",
                     });
 
-                    assert_povc_witness!(ctx, "polymessenger.receive", {
+                    assert_povc_witness!(ctx, "qmessenger.receive", {
                         witness_type: "message_delivery",
                         session_id: &session_id,
                     });
@@ -154,7 +154,7 @@ impl Journey for PolymessengerJourney {
                 .party("charlie")
                 .depends_on(&["bob_receives_message"])
                 .action(StepAction::Execute(|ctx: &mut ConvoyContext| {
-                    let traffic_analysis = ctx.polymessenger().analyze_traffic_pattern()?;
+                    let traffic_analysis = ctx.qmessenger().analyze_traffic_pattern()?;
 
                     assert!(
                         traffic_analysis.real_vs_cover_distinguishable == false,
@@ -165,7 +165,7 @@ impl Journey for PolymessengerJourney {
                     assert!(traffic_analysis.timing_variance_within_threshold);
                     assert!(traffic_analysis.sample_size >= 100);
 
-                    assert_metric_emitted!(ctx, "polymessenger.cover_traffic.verified", {
+                    assert_metric_emitted!(ctx, "qmessenger.cover_traffic.verified", {
                         "distinguishable" => "false",
                         "uniform_sizes" => "true",
                     });
@@ -182,7 +182,7 @@ impl Journey for PolymessengerJourney {
                     let message_id = ctx.get::<String>("message_id");
                     let session_id = ctx.get::<String>("session_id");
 
-                    let receipt = ctx.polymessenger().poll_receipt(
+                    let receipt = ctx.qmessenger().poll_receipt(
                         &session_id,
                         &message_id,
                     )?;
@@ -191,12 +191,12 @@ impl Journey for PolymessengerJourney {
                     assert!(receipt.read);
                     assert!(receipt.pq_signed);
 
-                    assert_blinded!(ctx, "polymessenger.receipt", {
+                    assert_blinded!(ctx, "qmessenger.receipt", {
                         field: "reader_id",
                         blinding: "hmac_sha3",
                     });
 
-                    assert_metric_emitted!(ctx, "polymessenger.receipt.received", {
+                    assert_metric_emitted!(ctx, "qmessenger.receipt.received", {
                         "read" => "true",
                     });
 
@@ -213,15 +213,15 @@ impl Journey for PolymessengerJourney {
 
                     // Sessions between different pairs must be cryptographically isolated
                     let charlie_id = ctx.party_id("charlie");
-                    let other_session = ctx.polymessenger().establish_session(
+                    let other_session = ctx.qmessenger().establish_session(
                         &charlie_id,
                         "ml-kem-1024",
                     )?;
 
                     assert_ne!(session_id, other_session.id);
                     assert_ne!(
-                        ctx.polymessenger().session_key_fingerprint(&session_id)?,
-                        ctx.polymessenger().session_key_fingerprint(&other_session.id)?,
+                        ctx.qmessenger().session_key_fingerprint(&session_id)?,
+                        ctx.qmessenger().session_key_fingerprint(&other_session.id)?,
                     );
 
                     // Stratum verification
@@ -234,7 +234,7 @@ impl Journey for PolymessengerJourney {
                     assert!(merkle.chain_intact);
                     assert!(merkle.root_hash_valid);
 
-                    assert_metric_emitted!(ctx, "polymessenger.session.isolated", {
+                    assert_metric_emitted!(ctx, "qmessenger.session.isolated", {
                         "csr_tier" => "ephemeral",
                     });
 
@@ -247,7 +247,7 @@ impl Journey for PolymessengerJourney {
                 .party("alice")
                 .depends_on(&["verify_session_isolation"])
                 .action(StepAction::Execute(|ctx: &mut ConvoyContext| {
-                    let telemetry = ctx.streamsight().drain_telemetry("poly-messenger-v1");
+                    let telemetry = ctx.streamsight().drain_telemetry("q-messenger-v1");
 
                     for event in &telemetry {
                         assert_blinded!(ctx, &event.event_type, {
@@ -267,15 +267,15 @@ impl Journey for PolymessengerJourney {
                     }
 
                     let cortex = CortexVisibility::new(ctx);
-                    cortex.assert_redacted("polymessenger", RedactPolicy::ContentFields)?;
-                    cortex.assert_obfuscated("polymessenger", ObfuscatePolicy::PartyIdentifiers)?;
+                    cortex.assert_redacted("qmessenger", RedactPolicy::ContentFields)?;
+                    cortex.assert_obfuscated("qmessenger", ObfuscatePolicy::PartyIdentifiers)?;
 
                     assert!(telemetry.len() >= 6, "Expected at least 6 telemetry events");
 
                     for event in &telemetry {
                         assert!(
-                            event.namespace.starts_with("poly-messenger-v1"),
-                            "Telemetry leaked outside poly-messenger-v1 namespace: {}",
+                            event.namespace.starts_with("q-messenger-v1"),
+                            "Telemetry leaked outside q-messenger-v1 namespace: {}",
                             event.namespace
                         );
                     }
@@ -289,16 +289,16 @@ impl Journey for PolymessengerJourney {
     fn metrics(&self) -> JourneyMetrics {
         JourneyMetrics {
             expected_events: vec![
-                "polymessenger.message.sent",
-                "polymessenger.relay.routed",
-                "polymessenger.message.received",
-                "polymessenger.cover_traffic.verified",
-                "polymessenger.receipt.received",
-                "polymessenger.session.isolated",
+                "qmessenger.message.sent",
+                "qmessenger.relay.routed",
+                "qmessenger.message.received",
+                "qmessenger.cover_traffic.verified",
+                "qmessenger.receipt.received",
+                "qmessenger.session.isolated",
             ],
             max_duration_ms: 75_000,
             required_povc_witnesses: 3,
-            lex_namespace: "poly-messenger-v1",
+            lex_namespace: "q-messenger-v1",
         }
     }
 }
@@ -309,10 +309,10 @@ mod tests {
     use estream_test::convoy::ConvoyRunner;
 
     #[tokio::test]
-    async fn run_polymessenger_journey() {
+    async fn run_qmessenger_journey() {
         let runner = ConvoyRunner::new()
             .with_blind_relay()
-            .with_streamsight("poly-messenger-v1")
+            .with_streamsight("q-messenger-v1")
             .with_stratum()
             .with_cortex();
 

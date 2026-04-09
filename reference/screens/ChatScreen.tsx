@@ -159,7 +159,7 @@ function getInitialMessagesForConversation(peerId: string, peerName: string, isG
   const messageTemplates: { [key: string]: ChatMessage[] } = {
     alice: [
       { id: `${peerId}_m1`, text: 'Hey! How are you?', timestamp: Date.now() - 3600000, isSent: false, status: MessageStatus.Read },
-      { id: `${peerId}_m2`, text: "I'm good! Working on Poly Messenger.", timestamp: Date.now() - 3500000, isSent: true, status: MessageStatus.Read },
+      { id: `${peerId}_m2`, text: "I'm good! Working on Q Messenger.", timestamp: Date.now() - 3500000, isSent: true, status: MessageStatus.Read },
       { id: `${peerId}_m3`, text: 'That sounds exciting! Is it using post-quantum crypto?', timestamp: Date.now() - 3400000, isSent: false, status: MessageStatus.Read },
       { id: `${peerId}_m4`, text: 'Yes! Kyber1024 for key exchange and Dilithium5 for signatures.', timestamp: Date.now() - 3300000, isSent: true, status: MessageStatus.Read },
     ],
@@ -169,7 +169,7 @@ function getInitialMessagesForConversation(peerId: string, peerName: string, isG
       { id: `${peerId}_m3`, text: 'Perfect, see you there!', timestamp: Date.now() - 7000000, isSent: false, status: MessageStatus.Read },
     ],
     carol: [
-      { id: `${peerId}_m1`, text: 'Thanks for the invite to Poly Messenger!', timestamp: Date.now() - 86400000, isSent: false, status: MessageStatus.Read },
+      { id: `${peerId}_m1`, text: 'Thanks for the invite to Q Messenger!', timestamp: Date.now() - 86400000, isSent: false, status: MessageStatus.Read },
       { id: `${peerId}_m2`, text: 'Welcome! Let me know if you have questions.', timestamp: Date.now() - 86300000, isSent: true, status: MessageStatus.Read },
     ],
   };
@@ -555,7 +555,7 @@ export function ChatScreen({
             PermissionsAndroid.PERMISSIONS.CAMERA,
             {
               title: 'Camera Permission',
-              message: 'Poly Messenger needs camera access to take photos',
+              message: 'Q Messenger needs camera access to take photos',
               buttonNeutral: 'Ask Me Later',
               buttonNegative: 'Cancel',
               buttonPositive: 'OK',

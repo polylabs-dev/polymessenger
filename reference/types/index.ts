@@ -1,5 +1,5 @@
 /**
- * Type exports for Poly Messenger
+ * Type exports for Q Messenger
  */
 
 export * from './messaging';

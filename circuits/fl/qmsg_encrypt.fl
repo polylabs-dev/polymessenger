@@ -1,17 +1,17 @@
-// Poly Messenger Encrypt — PQ end-to-end message encryption (v0.11.0)
+// Q Messenger Encrypt — PQ end-to-end message encryption (v0.11.0)
 //
 // Lex Architecture:
-//   esn/global/org/polylabs/messenger/encrypt
+//   esn/global/org/polyqlabs/messenger/encrypt
 //   Per-session ML-KEM-1024 key exchange, AES-256-GCM message encryption.
-//   Session keys rotate on each ratchet step (see polymsg_ratchet.fl).
+//   Session keys rotate on each ratchet step (see qmsg_ratchet.fl).
 //
 // Key exchange:
 //   ML-KEM-1024 encapsulation → 32-byte shared secret
 //   HKDF-SHA3-256(shared_secret, session_context) → SessionKey
 //   AES-256-GCM(SessionKey, nonce, plaintext, aad) → ciphertext + tag
 
-import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
-import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_identity from "../../qkit/circuits/fl/qkit_identity.fl"
+import qkit_metering from "../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Type Aliases ─────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ data EncryptedMessage : messenger v1 {
     timestamp_ms: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/encrypt
+    govern lex esn/global/org/polyqlabs/messenger/encrypt
     cortex {
         redact [ciphertext, nonce, tag]
         infer on_write
@@ -46,7 +46,7 @@ data DecryptedMessage : messenger v1 {
     verified: bool,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/encrypt
+    govern lex esn/global/org/polyqlabs/messenger/encrypt
     cortex {
         redact [plaintext]
         infer on_write
@@ -62,7 +62,7 @@ data SessionEstablishment : messenger v1 {
     established_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/encrypt
+    govern lex esn/global/org/polyqlabs/messenger/encrypt
     cortex {
         redact [session_key, kem_ciphertext]
         infer on_write
@@ -76,7 +76,7 @@ data SessionRotation : messenger v1 {
     rotation_index: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/encrypt
+    govern lex esn/global/org/polyqlabs/messenger/encrypt
     cortex {
         redact [new_key, old_key_hash]
         infer on_write
@@ -103,7 +103,7 @@ circuit establish_session(
     responder_id: bytes(16),
 ) -> SessionEstablishment
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/encrypt
+    lex esn/global/org/polyqlabs/messenger/encrypt
     precision C
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
@@ -147,7 +147,7 @@ circuit encrypt_message(
     sequence: u64,
 ) -> EncryptedMessage
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/encrypt
+    lex esn/global/org/polyqlabs/messenger/encrypt
     precision C
     constant_time true
     meters [compute_cycles, crypto_ops, bandwidth_bytes]
@@ -187,7 +187,7 @@ circuit decrypt_message(
     session_key: SessionKey,
 ) -> DecryptedMessage
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/encrypt
+    lex esn/global/org/polyqlabs/messenger/encrypt
     precision C
     constant_time true
     meters [compute_cycles, crypto_ops]
@@ -219,7 +219,7 @@ circuit rotate_session_key(
     rotation_index: u64,
 ) -> SessionRotation
     profile poly_framework_sensitive
-    lex esn/global/org/polylabs/messenger/encrypt
+    lex esn/global/org/polyqlabs/messenger/encrypt
     precision C
     constant_time true
     meters [compute_cycles, crypto_ops]

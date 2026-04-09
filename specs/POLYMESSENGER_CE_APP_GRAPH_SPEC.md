@@ -4,12 +4,12 @@
 |-------|-------|
 | **Version** | v0.1.0 |
 | **Status** | Draft |
-| **Product** | Poly Messenger |
-| **Lex Namespace** | `polylabs/polymessenger` |
-| **App Graph** | `circuits/fl/polymessenger_app_graph.fl` |
-| **CE Meaning** | `circuits/fl/polymessenger_meaning.fl` |
-| **Upstream Dependency** | PolyKit v0.12.0+, eStream v0.22.0+ (CE Phase 1+) |
-| **New Circuits** | 2 (`polymessenger_app_graph.fl`, `polymessenger_meaning.fl`) |
+| **Product** | Q Messenger |
+| **Lex Namespace** | `polyqlabs/qmessenger` |
+| **App Graph** | `circuits/fl/qmessenger_app_graph.fl` |
+| **CE Meaning** | `circuits/fl/qmessenger_meaning.fl` |
+| **Upstream Dependency** | QKit v0.12.0+, eStream v0.22.0+ (CE Phase 1+) |
+| **New Circuits** | 2 (`qmessenger_app_graph.fl`, `qmessenger_meaning.fl`) |
 | **Total Circuits** | 13 (11 existing + 2 new) |
 
 ---
@@ -18,7 +18,7 @@
 
 ### Purpose
 
-This specification defines how Poly Messenger integrates with the eStream Cognitive Engine and registers its circuit topology as an App Graph. PolyMessenger composes 11 FL circuits (8 modules + 3 graphs) into a Stratum module graph with CE meaning domains tuned for encrypted messaging workloads.
+This specification defines how Q Messenger integrates with the eStream Cognitive Engine and registers its circuit topology as an App Graph. PolyMessenger composes 11 FL circuits (8 modules + 3 graphs) into a Stratum module graph with CE meaning domains tuned for encrypted messaging workloads.
 
 ### Design Principles
 
@@ -26,8 +26,8 @@ This specification defines how Poly Messenger integrates with the eStream Cognit
 |-----------|----------------|
 | **100% FastLang** | Both new circuits are `.fl` source, compiled via FLIR codegen |
 | **Zero-Linkage Compliant** | CE state isolated via HKDF context `poly-messenger-ce-v1` |
-| **Composable** | Composes PolyKit CE adapter circuits via `EDGE_BRIDGE_TO` |
-| **Lex-Isolated** | All CE observations stay within `polylabs/polymessenger/*` lex namespaces |
+| **Composable** | Composes QKit CE adapter circuits via `EDGE_BRIDGE_TO` |
+| **Lex-Isolated** | All CE observations stay within `polyqlabs/qmessenger/*` lex namespaces |
 
 ---
 
@@ -37,29 +37,29 @@ This specification defines how Poly Messenger integrates with the eStream Cognit
 
 | Module | Circuit File | Partition | SLA |
 |--------|-------------|-----------|-----|
-| `polymsg_encrypt` | `polymsg_encrypt.fl` | Backend | Premium |
-| `polymsg_ratchet` | `polymsg_ratchet.fl` | Backend | Premium |
-| `polymsg_relay` | `polymsg_relay.fl` | Backend | Premium |
-| `polymsg_classify` | `polymsg_classify.fl` | Backend | Standard |
-| `polymsg_incognito` | `polymsg_incognito.fl` | Backend | Premium |
-| `polymsg_metering` | `polymsg_metering.fl` | Shared | Standard |
-| `polymsg_platform_health` | `polymsg_platform_health.fl` | Shared | Standard |
-| `polymsg_rbac` | `polymsg_rbac.fl` | Shared | Standard |
-| `polymsg_contact_graph` | `graphs/polymsg_contact_graph.fl` | Backend | Standard |
-| `polymsg_conversation_dag` | `graphs/polymsg_conversation_dag.fl` | Backend | Standard |
-| `polymsg_relay_graph` | `graphs/polymsg_relay_graph.fl` | Backend | Premium |
+| `qmsg_encrypt` | `qmsg_encrypt.fl` | Backend | Premium |
+| `qmsg_ratchet` | `qmsg_ratchet.fl` | Backend | Premium |
+| `qmsg_relay` | `qmsg_relay.fl` | Backend | Premium |
+| `qmsg_classify` | `qmsg_classify.fl` | Backend | Standard |
+| `qmsg_incognito` | `qmsg_incognito.fl` | Backend | Premium |
+| `qmsg_metering` | `qmsg_metering.fl` | Shared | Standard |
+| `qmsg_platform_health` | `qmsg_platform_health.fl` | Shared | Standard |
+| `qmsg_rbac` | `qmsg_rbac.fl` | Shared | Standard |
+| `qmsg_contact_graph` | `graphs/qmsg_contact_graph.fl` | Backend | Standard |
+| `qmsg_conversation_dag` | `graphs/qmsg_conversation_dag.fl` | Backend | Standard |
+| `qmsg_relay_graph` | `graphs/qmsg_relay_graph.fl` | Backend | Premium |
 
 ### Intra-Graph Edges
 
-- `polymsg_encrypt` → `polymsg_ratchet` (session key derivation)
-- `polymsg_relay` → `polymsg_relay_graph` (route selection)
-- `polymsg_relay` → `polymsg_encrypt` (onion layer encryption)
-- `polymsg_classify` → `polymsg_rbac` (content policy enforcement)
-- `polymsg_incognito` → `polymsg_encrypt` (ephemeral session establishment)
-- `polymsg_contact_graph` → `polymsg_rbac` (trust and blocking enforcement)
-- `polymsg_conversation_dag` → `polymsg_encrypt` (message ordering with encryption)
-- `polymsg_metering` → `polymsg_relay` (relay hop accounting)
-- `polymsg_platform_health` → `polymsg_relay_graph` (relay health overlay reads)
+- `qmsg_encrypt` → `qmsg_ratchet` (session key derivation)
+- `qmsg_relay` → `qmsg_relay_graph` (route selection)
+- `qmsg_relay` → `qmsg_encrypt` (onion layer encryption)
+- `qmsg_classify` → `qmsg_rbac` (content policy enforcement)
+- `qmsg_incognito` → `qmsg_encrypt` (ephemeral session establishment)
+- `qmsg_contact_graph` → `qmsg_rbac` (trust and blocking enforcement)
+- `qmsg_conversation_dag` → `qmsg_encrypt` (message ordering with encryption)
+- `qmsg_metering` → `qmsg_relay` (relay hop accounting)
+- `qmsg_platform_health` → `qmsg_relay_graph` (relay health overlay reads)
 
 ---
 
@@ -131,7 +131,7 @@ Aggregate usage metrics for product health and growth signals.
 
 | Field | Value |
 |-------|-------|
-| Panel ID | `polymsg_e2e_encryption_health` |
+| Panel ID | `qmsg_e2e_encryption_health` |
 | Domain Scope | `messaging/security` |
 | Min Panelists | 3 |
 | Specializations | `ratchet_protocol`, `key_exchange`, `forward_secrecy`, `session_management` |
@@ -144,7 +144,7 @@ Advisory triggers: ratchet stall > 60s, skipped key cache > 128 entries, decrypt
 
 | Field | Value |
 |-------|-------|
-| Panel ID | `polymsg_relay_optimization` |
+| Panel ID | `qmsg_relay_optimization` |
 | Domain Scope | `messaging/security` |
 | Min Panelists | 3 |
 | Specializations | `route_selection`, `jurisdiction_diversity`, `load_balancing`, `cover_traffic` |
@@ -161,8 +161,8 @@ Advisory triggers: jurisdiction concentration > 40% single country, relay load >
 
 | Bridge | Source Module | Target | Shared Fields |
 |--------|-------------|--------|---------------|
-| PolyKit blind_relay | `polymsg_relay` | `polykit_blind_relay` | `relay_config`, `route_policy`, `cover_traffic_config` |
-| PolyKit media_stream | `polymsg_encrypt` | `polykit_media_stream` | `stream_config`, `codec_policy`, `bandwidth_allocation` |
+| QKit blind_relay | `qmsg_relay` | `qkit_blind_relay` | `relay_config`, `route_policy`, `cover_traffic_config` |
+| QKit media_stream | `qmsg_encrypt` | `qkit_media_stream` | `stream_config`, `codec_policy`, `bandwidth_allocation` |
 
 ---
 
@@ -181,18 +181,18 @@ Advisory triggers: jurisdiction concentration > 40% single country, relay load >
 
 | Circuit | File | Description |
 |---------|------|-------------|
-| `polymessenger_app_graph` | `circuits/fl/polymessenger_app_graph.fl` | 11-module app graph, edges, bridges, golden tests |
-| `polymessenger_meaning` | `circuits/fl/polymessenger_meaning.fl` | 3 CE domains, noise filter, 2 SME panels, golden tests |
+| `qmessenger_app_graph` | `circuits/fl/qmessenger_app_graph.fl` | 11-module app graph, edges, bridges, golden tests |
+| `qmessenger_meaning` | `circuits/fl/qmessenger_meaning.fl` | 3 CE domains, noise filter, 2 SME panels, golden tests |
 
 ### Existing Circuits (11)
 
 | Group | Circuits | Count |
 |-------|----------|-------|
-| **crypto** | `polymsg_encrypt`, `polymsg_ratchet` | 2 |
-| **relay** | `polymsg_relay` | 1 |
-| **policy** | `polymsg_classify`, `polymsg_incognito`, `polymsg_rbac` | 3 |
-| **ops** | `polymsg_metering`, `polymsg_platform_health` | 2 |
-| **graphs** | `polymsg_contact_graph`, `polymsg_conversation_dag`, `polymsg_relay_graph` | 3 |
+| **crypto** | `qmsg_encrypt`, `qmsg_ratchet` | 2 |
+| **relay** | `qmsg_relay` | 1 |
+| **policy** | `qmsg_classify`, `qmsg_incognito`, `qmsg_rbac` | 3 |
+| **ops** | `qmsg_metering`, `qmsg_platform_health` | 2 |
+| **graphs** | `qmsg_contact_graph`, `qmsg_conversation_dag`, `qmsg_relay_graph` | 3 |
 
 ### Total: 13 Circuits
 
@@ -209,8 +209,8 @@ Advisory triggers: jurisdiction concentration > 40% single country, relay load >
 | Dependency | Version | Usage |
 |------------|---------|-------|
 | eStream CE | v0.22.0+ Phase 1+ | SSM hidden state, observation ingestion, cortex advisors |
-| PolyKit CE | v0.12.0+ | `polykit_cognitive`, `polykit_noise_filter`, `polykit_sme`, `polykit_app_graph` |
-| `polykit_blind_relay` | existing | Bridge target for relay integration |
-| `polykit_media_stream` | existing | Bridge target for encrypted media streams |
-| `polykit_identity` | existing | SPARK identity for HKDF derivation |
-| `polykit_metering` | existing | Per-invocation metering with differential privacy |
+| QKit CE | v0.12.0+ | `qkit_cognitive`, `qkit_noise_filter`, `qkit_sme`, `qkit_app_graph` |
+| `qkit_blind_relay` | existing | Bridge target for relay integration |
+| `qkit_media_stream` | existing | Bridge target for encrypted media streams |
+| `qkit_identity` | existing | SPARK identity for HKDF derivation |
+| `qkit_metering` | existing | Per-invocation metering with differential privacy |

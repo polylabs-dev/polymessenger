@@ -1,14 +1,14 @@
-/// Poly Messenger RBAC — Role-Based Access Control graph (v0.11.0)
+/// Q Messenger RBAC — Role-Based Access Control graph (v0.11.0)
 /// Stratum graph storage + Cortex AI governance + ML-DSA-87 signing
-/// govern lex esn/global/org/polylabs/messenger/rbac
+/// govern lex esn/global/org/polyqlabs/messenger/rbac
 ///
 /// Roles: User, GroupAdmin, Moderator, Observer
 /// Permissions: can_send, can_moderate, can_admin
 /// Graph models user → group membership with role-based overlays.
 /// AI feed detects anomalous role patterns (privilege escalation, mass admin grants).
 
-import polykit_identity from "../../polykit/circuits/fl/polykit_identity.fl"
-import polykit_metering from "../../polykit/circuits/fl/polykit_metering.fl"
+import qkit_identity from "../../qkit/circuits/fl/qkit_identity.fl"
+import qkit_metering from "../../qkit/circuits/fl/qkit_metering.fl"
 
 // ── Enums ───────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ data UserInfo : messenger v1 {
     last_active: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex esn/global/org/polyqlabs/messenger/rbac
     cortex {
         redact [spark_id]
         obfuscate [display_name]
@@ -55,7 +55,7 @@ data GroupInfo : messenger v1 {
     created_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex esn/global/org/polyqlabs/messenger/rbac
     cortex {
         obfuscate [owner_id]
         infer on_write
@@ -71,7 +71,7 @@ data RoleAssignment : messenger v1 {
     expires_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex esn/global/org/polyqlabs/messenger/rbac
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -85,7 +85,7 @@ data PermissionCheck : messenger v1 {
     checked_at: u64,
 }
     store kv
-    govern lex esn/global/org/polylabs/messenger/rbac
+    govern lex esn/global/org/polyqlabs/messenger/rbac
     cortex {
         infer on_write
         on_anomaly alert "messenger-team"
@@ -161,7 +161,7 @@ circuit register_user(
     encryption_pk: bytes(1568),
 ) -> UserInfo
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
+    lex esn/global/org/polyqlabs/messenger/rbac
     precision C
     meters [compute_cycles, memory_bytes]
     observe metrics: [users_registered, rbac_graph_size]
@@ -200,7 +200,7 @@ circuit assign_role(
     role: MessengerRole,
 ) -> RoleAssignment
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
+    lex esn/global/org/polyqlabs/messenger/rbac
     precision C
     meters [compute_cycles]
     observe metrics: [role_assignments, admin_grants, moderator_grants, role_changes]
@@ -268,7 +268,7 @@ circuit check_permission(
     permission: Permission,
 ) -> PermissionCheck
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
+    lex esn/global/org/polyqlabs/messenger/rbac
     precision C
     meters [compute_cycles]
     observe metrics: [permission_checks, permission_denied, permission_granted]
@@ -312,7 +312,7 @@ circuit revoke_role(
     group_id: bytes(16),
 ) -> bool
     profile poly_framework_standard
-    lex esn/global/org/polylabs/messenger/rbac
+    lex esn/global/org/polyqlabs/messenger/rbac
     precision C
     meters [compute_cycles]
     observe metrics: [role_revocations, admin_revocations]

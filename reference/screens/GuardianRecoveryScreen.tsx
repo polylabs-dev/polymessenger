@@ -4,7 +4,7 @@
  * Manage recovery guardians and recovery requests.
  * Uses Spark verification for all sensitive operations.
  * 
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 import React, { useState, useCallback } from 'react';
@@ -327,13 +327,13 @@ export function GuardianRecoveryScreen({ onBack }: GuardianRecoveryScreenProps):
                 walletId="guardian_invite"
                 displayMode="full"
                 size={280}
-                actionType="app.polymessenger/guardian.add"
+                actionType="app.qmessenger/guardian.add"
                 autoRefresh={true}
               />
             </View>
             
             <Text style={styles.sparkHelp}>
-              Your guardian needs to have Poly Messenger installed
+              Your guardian needs to have Q Messenger installed
             </Text>
           </View>
         </View>

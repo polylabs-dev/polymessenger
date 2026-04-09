@@ -1,5 +1,5 @@
 /**
- * PRIME Identity Types for Poly Messenger
+ * PRIME Identity Types for Q Messenger
  * 
  * Hardware-rooted cryptographic identity using ETFA fingerprinting.
  */

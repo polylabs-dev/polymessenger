@@ -3,7 +3,7 @@
  *
  * React hook for the eStream messaging client.
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  * @issue #101
  */
 

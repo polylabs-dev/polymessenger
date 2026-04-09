@@ -57,7 +57,7 @@ export function ProfileScreen({ profile, onUpdateName, onBack }: Props): React.J
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `Add me on Poly Messenger!\n\nName: ${profile.name}\nKey: ${profile.keyHash}\n\nLink: poly://add/${profile.keyHash}\n\n🔐 Quantum-secure messaging`,
+        message: `Add me on Q Messenger!\n\nName: ${profile.name}\nKey: ${profile.keyHash}\n\nLink: poly://add/${profile.keyHash}\n\n🔐 Quantum-secure messaging`,
         title: 'Share My Profile',
       });
     } catch (error) {
@@ -210,7 +210,7 @@ export function ProfileScreen({ profile, onUpdateName, onBack }: Props): React.J
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Poly Messenger by eStream</Text>
+          <Text style={styles.footerText}>Q Messenger by eStream</Text>
           <Text style={styles.versionText}>v1.0.0</Text>
         </View>
       </ScrollView>

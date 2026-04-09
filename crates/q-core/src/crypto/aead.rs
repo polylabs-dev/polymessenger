@@ -69,7 +69,7 @@ mod tests {
     fn encrypt_decrypt_roundtrip() {
         let key = [0x42u8; 32];
         let nonce = [0x01u8; 12];
-        let plaintext = b"Hello, Poly Messenger!";
+        let plaintext = b"Hello, Q Messenger!";
         let aad = b"session-context";
 
         let (ct, tag) = aes_gcm_encrypt(&key, &nonce, plaintext, aad).unwrap();

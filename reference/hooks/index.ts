@@ -1,7 +1,7 @@
 /**
- * Hook exports for Poly Messenger
+ * Hook exports for Q Messenger
  *
- * @package io.estream.polymessenger
+ * @package io.estream.qmessenger
  */
 
 // Core messaging hooks

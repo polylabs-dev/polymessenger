@@ -1,21 +1,21 @@
 [package]
-name = "polymessenger"
+name = "qmessenger"
 version = "0.22.0"
 description = "PQ encrypted messaging with blind relay, double-ratchet forward secrecy, RBAC, and incognito mode"
 license = "LicenseRef-PolyQuantum-Commercial"
-repository = "https://github.com/polylabs-dev/polymessenger"
+repository = "https://github.com/polylabs-dev/qmessenger"
 
 [publisher]
 id = "polylabs-dev"
-name = "Poly Labs"
-signing_key_id = "polylabs-prime-v1"
+name = "PolyQ Labs"
+signing_key_id = "polyqlabs-prime-v1"
 
 [flir]
 api_version = "0.22.0"
 min_platform_version = "0.21.0"
 
 [dependencies]
-polykit = ">=0.4.0"
+qkit = ">=0.4.0"
 
 [pricing]
 license_type = "per-invocation"
